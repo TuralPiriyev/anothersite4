@@ -8,6 +8,7 @@ import { AuthPage } from './pages/AuthPage';
 import { VerificationPage } from './components/auth/VerificationPage';
 import { MainPage } from './pages/MainPage';
 import { WorkspacePage } from './pages/WorkspacePage';
+import { EnhancedWorkspacePage } from './pages/EnhancedWorkspacePage';
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 
 
@@ -24,6 +25,7 @@ function App() {
               <Route path="/verify" element={<VerificationPage />} />
               <Route path="/main" element={<MainPage />} />
               <Route path="/workspace" element={<WorkspacePage />} />
+              <Route path="/enhanced-workspace" element={<EnhancedWorkspacePage />} />
               
             </Routes>
             <UpgradeModal/>
