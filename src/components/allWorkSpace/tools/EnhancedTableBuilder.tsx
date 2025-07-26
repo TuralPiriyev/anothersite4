@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Key, Link2, AlertCircle, Save, X, Edit3 } from 'lucide-react';
+import { Plus, Trash2, Key, Link2, AlertCircle, Save, X, Edit3, ChevronDown } from 'lucide-react';
 import { useDatabase, Column, Table } from '../../../context/DatabaseContext';
 import { useSubscription } from '../../../context/SubscriptionContext';
 import { v4 as uuidv4 } from 'uuid';
@@ -24,7 +24,7 @@ interface ValidationError {
   type: 'error' | 'warning';
 }
 
-const AdvancedTableBuilder: React.FC = () => {
+const EnhancedTableBuilder: React.FC = () => {
   const { currentSchema, addTable, updateTable } = useDatabase();
   const { isLimitReached, setShowUpgradeModal, setUpgradeReason } = useSubscription();
   
@@ -38,6 +38,7 @@ const AdvancedTableBuilder: React.FC = () => {
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
   const [showFKModal, setShowFKModal] = useState(false);
   const [selectedColumn, setSelectedColumn] = useState<string>('');
+  const [selectedReferenceTable, setSelectedReferenceTable] = useState<string>('');
 
   const dataTypes = [
     'VARCHAR(255)', 'VARCHAR(100)', 'VARCHAR(50)',
@@ -91,24 +92,6 @@ const AdvancedTableBuilder: React.FC = () => {
       }
     });
 
-    // Circular dependency check
-    const checkCircularDependency = (tableName: string, visited: Set<string> = new Set()): boolean => {
-      if (visited.has(tableName)) return true;
-      visited.add(tableName);
-
-      const tableFKs = table.foreignKeys.filter(fk => fk.referencedTable !== tableName);
-      for (const fk of tableFKs) {
-        if (checkCircularDependency(fk.referencedTable, new Set(visited))) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    if (table.name && checkCircularDependency(table.name)) {
-      errors.push({ field: 'foreignKeys', message: 'Circular foreign key dependency detected', type: 'warning' });
-    }
-
     setValidationErrors(errors);
   };
 
@@ -154,31 +137,31 @@ const AdvancedTableBuilder: React.FC = () => {
     }));
   };
 
-  const addForeignKey = () => {
-    if (!selectedColumn) return;
-
-    setTable(prev => ({
-      ...prev,
-      foreignKeys: [
-        ...prev.foreignKeys,
-        {
-          id: uuidv4(),
-          columnName: selectedColumn,
-          referencedTable: '',
-          referencedColumn: '',
-          constraintName: `fk_${table.name}_${selectedColumn}`
-        }
-      ]
-    }));
-    setShowFKModal(false);
-    setSelectedColumn('');
+  const handleForeignKeySetup = (columnName: string) => {
+    setSelectedColumn(columnName);
+    setSelectedReferenceTable('');
+    setShowFKModal(true);
   };
 
-  const removeForeignKey = (fkId: string) => {
+  const addForeignKey = () => {
+    if (!selectedColumn || !selectedReferenceTable) return;
+
+    const newFK: ForeignKeyDefinition = {
+      id: uuidv4(),
+      columnName: selectedColumn,
+      referencedTable: selectedReferenceTable,
+      referencedColumn: '', // Will be set when reference column is selected
+      constraintName: `fk_${table.name}_${selectedColumn}`
+    };
+
     setTable(prev => ({
       ...prev,
-      foreignKeys: prev.foreignKeys.filter(fk => fk.id !== fkId)
+      foreignKeys: [...prev.foreignKeys, newFK]
     }));
+    
+    setShowFKModal(false);
+    setSelectedColumn('');
+    setSelectedReferenceTable('');
   };
 
   const updateForeignKey = (fkId: string, updates: Partial<ForeignKeyDefinition>) => {
@@ -190,11 +173,29 @@ const AdvancedTableBuilder: React.FC = () => {
     }));
   };
 
+  const removeForeignKey = (fkId: string) => {
+    setTable(prev => ({
+      ...prev,
+      foreignKeys: prev.foreignKeys.filter(fk => fk.id !== fkId)
+    }));
+  };
+
   const handleCreateOrUpdateTable = () => {
+
+   
+
     if (validationErrors.some(e => e.type === 'error')) return;
 
+    // Check table limit before allowing creation
+    if (!editingTable && isLimitReached('maxTables', currentSchema.tables.length)) {
+      setUpgradeReason('You have reached the maximum number of tables for your plan. Upgrade to create more tables.');
+      setShowUpgradeModal(true);
+      return;
+    }
+     const tableId = editingTable?.id || uuidv4();
     const tableData = {
-      name: table.name,
+      id: tableId, 
+     name: table.name,
       columns: table.columns.map(col => ({ 
         ...col, 
         id: uuidv4(),
@@ -209,17 +210,20 @@ const AdvancedTableBuilder: React.FC = () => {
       addTable(tableData);
     }
 
-    // Add relationships for foreign keys
+    // Create relationships for foreign keys with proper SQL generation
     table.foreignKeys.forEach(fk => {
       const sourceColumn = tableData.columns.find(col => col.name === fk.columnName);
       const targetTable = currentSchema.tables.find(t => t.name === fk.referencedTable);
       const targetColumn = targetTable?.columns.find(col => col.name === fk.referencedColumn);
 
       if (sourceColumn && targetTable && targetColumn) {
-        // This would be handled by the relationship system
-        console.log('Creating relationship:', {
-          source: { table: table.name, column: fk.columnName },
-          target: { table: fk.referencedTable, column: fk.referencedColumn }
+        // Add relationship to database context
+        addRelationship({
+          sourceTableId: editingTable?.id || tableData.id,
+          sourceColumnId: sourceColumn.id,
+          targetTableId: targetTable.id,
+          targetColumnId: targetColumn.id,
+          cardinality: '1:N'
         });
       }
     });
@@ -267,7 +271,7 @@ const AdvancedTableBuilder: React.FC = () => {
       <div className="mb-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            {editingTable ? 'Edit Table' : 'Advanced Table Builder'}
+            {editingTable ? 'Edit Table' : 'Enhanced Table Builder'}
           </h3>
           {editingTable && (
             <button
@@ -376,10 +380,7 @@ const AdvancedTableBuilder: React.FC = () => {
 
                   <div className="flex items-center gap-4">
                     <button
-                      onClick={() => {
-                        setSelectedColumn(column.name);
-                        setShowFKModal(true);
-                      }}
+                      onClick={() => handleForeignKeySetup(column.name)}
                       disabled={!column.name}
                       className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors duration-200"
                     >
@@ -504,45 +505,63 @@ const AdvancedTableBuilder: React.FC = () => {
         </div>
       </div>
 
-      {/* Foreign Key Modal */}
+      {/* Enhanced Foreign Key Modal - Centered */}
       {showFKModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-2xl shadow-2xl">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
               Add Foreign Key for "{selectedColumn}"
             </h3>
             
-            <div className="space-y-4 mb-6">
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              {/* Reference Table Selection */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Reference Table
                 </label>
-                <select
-                  value=""
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      const newFK: ForeignKeyDefinition = {
-                        id: uuidv4(),
-                        columnName: selectedColumn,
-                        referencedTable: e.target.value,
-                        referencedColumn: '',
-                        constraintName: `fk_${table.name}_${selectedColumn}`
-                      };
-                      setTable(prev => ({
-                        ...prev,
-                        foreignKeys: [...prev.foreignKeys, newFK]
-                      }));
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
-                >
-                  <option value="">Select reference table</option>
-                  {getAvailableReferenceTables().map(refTable => (
-                    <option key={refTable.id} value={refTable.name}>
-                      {refTable.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <select
+                    value={selectedReferenceTable}
+                    onChange={(e) => setSelectedReferenceTable(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500 appearance-none"
+                  >
+                    <option value="">Select reference table</option>
+                    {getAvailableReferenceTables().map(refTable => (
+                      <option key={refTable.id} value={refTable.name}>
+                        {refTable.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Reference Column Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Reference Column
+                </label>
+                <div className="relative">
+                  <select
+                    value={table.foreignKeys.find(fk => fk.columnName === selectedColumn)?.referencedColumn || ''}
+                    onChange={(e) => {
+                      const existingFK = table.foreignKeys.find(fk => fk.columnName === selectedColumn);
+                      if (existingFK) {
+                        updateForeignKey(existingFK.id, { referencedColumn: e.target.value });
+                      }
+                    }}
+                    disabled={!selectedReferenceTable}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500 appearance-none disabled:opacity-50"
+                  >
+                    <option value="">Select reference column</option>
+                    {getAvailableColumns(selectedReferenceTable).map(column => (
+                      <option key={column.id} value={column.name}>
+                        {column.name} ({column.type})
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
               </div>
             </div>
             
@@ -551,10 +570,35 @@ const AdvancedTableBuilder: React.FC = () => {
                 onClick={() => {
                   setShowFKModal(false);
                   setSelectedColumn('');
+                  setSelectedReferenceTable('');
                 }}
                 className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors duration-200"
               >
                 Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (selectedReferenceTable) {
+                    const newFK: ForeignKeyDefinition = {
+                      id: uuidv4(),
+                      columnName: selectedColumn,
+                      referencedTable: selectedReferenceTable,
+                      referencedColumn: '',
+                      constraintName: `fk_${table.name}_${selectedColumn}`
+                    };
+                    setTable(prev => ({
+                      ...prev,
+                      foreignKeys: [...prev.foreignKeys, newFK]
+                    }));
+                    setShowFKModal(false);
+                    setSelectedColumn('');
+                    setSelectedReferenceTable('');
+                  }
+                }}
+                disabled={!selectedReferenceTable}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg transition-colors duration-200"
+              >
+                Add Foreign Key
               </button>
             </div>
           </div>
@@ -564,4 +608,8 @@ const AdvancedTableBuilder: React.FC = () => {
   );
 };
 
-export default AdvancedTableBuilder;
+export default EnhancedTableBuilder;
+
+function addRelationship(arg0: { sourceTableId: any; sourceColumnId: string; targetTableId: string; targetColumnId: string; cardinality: string; }) {
+    throw new Error('Function not implemented.');
+}

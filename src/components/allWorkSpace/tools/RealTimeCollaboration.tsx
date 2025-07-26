@@ -1,13 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, Wifi, WifiOff, MousePointer, Eye, Edit, Crown, 
-  Settings,
-  // UserPlus, UserMinus,
-    Shield, Activity 
+  Settings, Shield, Activity, Send, UserPlus, Copy, Check, X, Clock, Globe, Lock, AlertCircle
 } from 'lucide-react';
 import { useSubscription } from '../../../context/SubscriptionContext';
 import { useDatabase } from '../../../context/DatabaseContext';
+import { useWebSocket } from '../../../hooks/useWebSocket';
+import { mongoService } from '../../../services/mongoService';
+import api from '../../../utils/api';
 
+ const getRoleBadgeColor = (role: CollaboratorPresence['role']): string => {
+  switch (role) {
+
+    case 'admin':  return 'bg-purple-100 text-purple-800';
+    case 'editor': return 'bg-blue-100   text-blue-800';
+    case 'viewer': return 'bg-gray-100   text-gray-800';
+    default:       return 'bg-gray-100   text-gray-800';
+  }
+};
 interface CollaboratorCursor {
   userId: string;
   username: string;
@@ -20,10 +30,15 @@ interface CollaboratorCursor {
   lastSeen: Date;
 }
 
+interface CollaborationStatus {
+  isConnected: boolean;
+  lastSync: string;
+  activeUsers: number;
+}
 interface CollaboratorPresence {
   userId: string;
   username: string;
-  role: 'admin' | 'editor' | 'viewer';
+  role: 'owner' | 'admin' | 'editor' | 'viewer';
   status: 'online' | 'away' | 'offline';
   currentAction?: string;
   joinedAt: Date;
@@ -35,14 +50,29 @@ interface RealtimeEvent {
   type: 'table_created' | 'table_updated' | 'table_deleted' | 'relationship_added' | 'user_joined' | 'user_left';
   userId: string;
   username: string;
-  timestamp: Date;
+  timestamp: string;
   data: any;
 }
 
 const RealTimeCollaboration: React.FC = () => {
   const { currentPlan } = useSubscription();
-  const { currentSchema } = useDatabase();
+  const { 
+    currentSchema, 
+    inviteToWorkspace,
+    acceptWorkspaceInvitation,
+    removeWorkspaceMember,
+    syncWorkspaceWithMongoDB,
+    addTable,
+    updateTable,
+    removeTable
+  } = useDatabase();
   
+const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStatus>({
+  isConnected: false,
+  lastSync: new Date().toISOString(),
+  activeUsers: 0
+});
+
   const [isConnected, setIsConnected] = useState(false);
   const [collaborators, setCollaborators] = useState<CollaboratorPresence[]>([]);
   const [cursors, setCursors] = useState<CollaboratorCursor[]>([]);
@@ -50,126 +80,229 @@ const RealTimeCollaboration: React.FC = () => {
   const [showPresencePanel, setShowPresencePanel] = useState(true);
   const [connectionQuality, setConnectionQuality] = useState<'excellent' | 'good' | 'poor'>('excellent');
   
-  const wsRef = useRef<WebSocket | null>(null);
- const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
- const heartbeatIntervalRef = useRef<NodeJS.Timeout>();
-  // Mock data for demonstration
-  useEffect(() => {
-    if (currentPlan === 'ultimate') {
-      // Simulate real-time collaboration
+  // State for invitation form
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [inviteRole, setInviteRole] = useState<'editor' | 'viewer'>('editor');
+  const [isInviting, setIsInviting] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState('');
+  const [generatedCode, setGeneratedCode] = useState('');
+  
+  // State for accepting invitations
+  const [joinCode, setJoinCode] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
+  const [joinError, setJoinError] = useState('');
+  const [joinSuccess, setJoinSuccess] = useState('');
+  
+  // State for active tab
+  const [activeTab, setActiveTab] = useState<'invite' | 'accept' | 'members'>('invite');
+  
+  // State for copied code feedback
+  const [copiedCode, setCopiedCode] = useState('');
+  
+  // Real WebSocket connection for collaboration
+  const wsUrl = import.meta.env.DEV 
+    ? `ws://localhost:8080/collaboration/${currentSchema.id}`
+    : `wss://${window.location.host}/ws/collaboration/${currentSchema.id}`;
+    
+  const { isConnected: socketConnected, sendMessage } = useWebSocket({
+    url: wsUrl,
+    onOpen: () => {
       setIsConnected(true);
-      setCollaborators([
-        {
-          userId: 'user1',
-          username: 'alice_dev',
-          role: 'editor',
-          status: 'online',
-          currentAction: 'Editing users table',
-          joinedAt: new Date(Date.now() - 300000),
-          avatar: '👩‍💻'
-        },
-        {
-          userId: 'user2',
-          username: 'bob_designer',
-          role: 'viewer',
-          status: 'online',
-          currentAction: 'Viewing schema',
-          joinedAt: new Date(Date.now() - 600000),
-          avatar: '👨‍🎨'
-        }
-      ]);
-
-      setCursors([
-        {
-          userId: 'user1',
-          username: 'alice_dev',
-          position: { x: 250, y: 150 },
-          selection: { tableId: 'table1', columnId: 'col1' },
-          color: '#3B82F6',
-          lastSeen: new Date()
-        }
-      ]);
-
-      setRealtimeEvents([
-        {
-          id: '1',
-          type: 'table_created',
-          userId: 'user1',
-          username: 'alice_dev',
-          timestamp: new Date(Date.now() - 120000),
-          data: { tableName: 'users' }
-        },
-        {
-          id: '2',
-          type: 'relationship_added',
-          userId: 'user1',
-          username: 'alice_dev',
-          timestamp: new Date(Date.now() - 60000),
-          data: { source: 'orders', target: 'users' }
-        }
-      ]);
+      setConnectionQuality('excellent');
+      
+      // Send join event
+      sendMessage({
+        type: 'user_join',
+        userId: 'current_user',
+        username: 'current_user',
+        schemaId: currentSchema.id
+      });
+    },
+    onClose: () => {
+      setIsConnected(false);
+    },
+    onError: () => {
+      setConnectionQuality('poor');
+    },
+    onMessage: (message) => {
+      handleRealtimeMessage(message);
     }
-  }, [currentPlan]);
+  });
+  
+  // Sync connection state
+  useEffect(() => {
+  setIsConnected(socketConnected);
+}, [socketConnected]);
 
-  const initializeWebSocket = () => {
-    if (currentPlan !== 'ultimate') return;
+  // Real database collaboration functions
+  const handleSendInvitation = async () => {
+    if (!inviteUsername.trim()) {
+      setInviteError('Please enter a username');
+      return;
+    }
+
+    setIsInviting(true);
+    setInviteError('');
+    setInviteSuccess('');
 
     try {
-      // In a real implementation, this would connect to your WebSocket server
-      const ws = new WebSocket(`ws://localhost:8080/collaboration/${currentSchema.id}`);
+      // Validate username against real database
+      const response = await api.post('/api/users/validate', { username: inviteUsername });
       
-      ws.onopen = () => {
-        setIsConnected(true);
-        setConnectionQuality('excellent');
-        
-        // Send join event
-        ws.send(JSON.stringify({
-          type: 'user_join',
-          userId: 'current_user',
-          username: 'current_user',
-          schemaId: currentSchema.id
-        }));
+      if (!response.data.exists) {
+        setInviteError('User not found in our database.');
+        setIsInviting(false);
+        return;
+      }
 
-        // Start heartbeat
-        heartbeatIntervalRef.current = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-          }
-        }, 30000);
-      };
+      // Check if user is already invited or a member
+      const existingInvite = currentSchema.invitations.find(
+        inv => inv.inviteeUsername.toLowerCase() === inviteUsername.toLowerCase() && inv.status === 'pending'
+      );
+      const existingMember = currentSchema.members.find(
+        member => member.username.toLowerCase() === inviteUsername.toLowerCase()
+      );
 
-      ws.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-        handleRealtimeMessage(message);
-      };
+      if (existingInvite) {
+        setInviteError('User already has a pending invitation.');
+        setIsInviting(false);
+        return;
+      }
 
-      ws.onclose = () => {
-        setIsConnected(false);
-        if (heartbeatIntervalRef.current) {
-          clearInterval(heartbeatIntervalRef.current);
-        }
-        
-        // Attempt reconnection
-        reconnectTimeoutRef.current = setTimeout(() => {
-          initializeWebSocket();
-        }, 5000);
-      };
+      if (existingMember) {
+        setInviteError('User is already a team member.');
+        setIsInviting(false);
+        return;
+      }
 
-      ws.onerror = () => {
-        setConnectionQuality('poor');
-      };
+      // Create invitation using database context
+      const joinCode = await inviteToWorkspace({
+        inviterUsername: 'current_user',
+        inviteeUsername: inviteUsername,
+        role: inviteRole
+      });
 
-      wsRef.current = ws;
+      // Save to real MongoDB
+      await api.post('/api/invitations', {
+        workspaceId: currentSchema.id,
+        inviterUsername: 'current_user',
+        inviteeUsername: inviteUsername,
+        role: inviteRole,
+        joinCode,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        status: 'pending'
+      });
+
+      setGeneratedCode(joinCode);
+      setInviteSuccess(`Invitation sent successfully! Share this join code with ${inviteUsername}:`);
+      
+      // Reset form
+      setInviteUsername('');
+      setInviteRole('editor');
+      
     } catch (error) {
-      console.error('WebSocket connection failed:', error);
-      setIsConnected(false);
+      setInviteError('Failed to send invitation. Please try again.');
+      console.error('Invitation error:', error);
+    } finally {
+      setIsInviting(false);
+    }
+  };
+
+  const handleAcceptInvitation = async () => {
+    if (!joinCode.trim()) {
+      setJoinError('Please enter a join code');
+      return;
+    }
+
+    setIsJoining(true);
+    setJoinError('');
+    setJoinSuccess('');
+
+    try {
+      // Validate join code with real database
+      const response = await api.post('/api/invitations/validate', { joinCode: joinCode.toUpperCase() });
+      
+      if (!response.data.valid) {
+        setJoinError(response.data.error || 'Invalid or expired code.');
+        setIsJoining(false);
+        return;
+      }
+
+      const success = await acceptWorkspaceInvitation(joinCode.toUpperCase());
+      
+      if (!success) {
+        setJoinError('Failed to join workspace.');
+        setIsJoining(false);
+        return;
+      }
+
+      // Update invitation status in database
+      await api.put(`/api/invitations/${response.data.invitation.id}`, { status: 'accepted' });
+
+      // Add member to database
+      await api.post('/api/members', {
+        workspaceId: currentSchema.id,
+        id: crypto.randomUUID(),
+        username: response.data.invitation.inviteeUsername,
+        role: response.data.invitation.role,
+        joinedAt: new Date().toISOString()
+      });
+
+      setJoinSuccess(`Successfully joined the workspace! You now have ${response.data.invitation.role} access.`);
+      setJoinCode('');
+      
+      // Switch to members tab to show the new member
+      setTimeout(() => setActiveTab('members'), 2000);
+      
+    } catch (error) {
+      setJoinError('Failed to accept invitation. Please try again.');
+      console.error('Join error:', error);
+    } finally {
+      setIsJoining(false);
+    }
+  };
+
+  // Enhanced copy function with feedback
+  const copyJoinCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(code);
+      setTimeout(() => setCopiedCode(''), 2000);
+    } catch (error) {
+      console.error('Failed to copy code:', error);
+    }
+  };
+
+  // Enhanced member removal with real database sync
+  const removeMember = async (memberId: string) => {
+    const member = currentSchema.members.find(m => m.id === memberId);
+    if (!member) return;
+
+    if (confirm(`Are you sure you want to remove ${member.username} from the workspace?`)) {
+      removeWorkspaceMember(memberId);
+      
+      // Update real database
+      try {
+        await api.delete(`/api/members/${memberId}`);
+        await syncWorkspaceWithMongoDB();
+      } catch (error) {
+        console.error('Failed to update database:', error);
+      }
     }
   };
 
   const handleRealtimeMessage = (message: any) => {
     switch (message.type) {
       case 'user_joined':
-        setCollaborators(prev => [...prev, message.user]);
+        setCollaborators(prev => {
+          const exists = prev.find(c => c.userId === message.user.userId);
+          if (!exists) {
+            return [...prev, message.user];
+          }
+          return prev;
+        });
         addRealtimeEvent('user_joined', message.user.userId, message.user.username, message.data);
         break;
         
@@ -192,8 +325,8 @@ const RealTimeCollaboration: React.FC = () => {
         break;
         
       case 'schema_change':
-        // Apply schema changes from other users
-        console.log('Schema change received:', message);
+        // Apply real schema changes from other users
+        handleSchemaChange(message);
         addRealtimeEvent(message.changeType, message.userId, message.username, message.data);
         break;
         
@@ -202,6 +335,34 @@ const RealTimeCollaboration: React.FC = () => {
         break;
     }
   };
+  
+  const handleSchemaChange = (message: any) => {
+    const { changeType, data } = message;
+    
+    switch (changeType) {
+      case 'table_created':
+        if (data.table) {
+          addTable(data.table);
+        }
+        break;
+      case 'table_updated':
+        if (data.tableId && data.updates) {
+          updateTable(data.tableId, data.updates);
+        }
+        break;
+      case 'table_deleted':
+        if (data.tableId) {
+          removeTable(data.tableId);
+        }
+        break;
+      case 'relationship_added':
+        // Handle relationship changes
+        break;
+    }
+    
+    // Sync with MongoDB
+    syncWorkspaceWithMongoDB();
+  };
 
   const addRealtimeEvent = (type: RealtimeEvent['type'], userId: string, username: string, data: any) => {
     const event: RealtimeEvent = {
@@ -209,7 +370,7 @@ const RealTimeCollaboration: React.FC = () => {
       type,
       userId,
       username,
-      timestamp: new Date(),
+      timestamp:  new Date().toISOString(),
       data
     };
     
@@ -217,8 +378,8 @@ const RealTimeCollaboration: React.FC = () => {
   };
 
   const broadcastCursorPosition = (x: number, y: number, selection?: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
+    if (isConnected) {
+      sendMessage({
         type: 'cursor_update',
         cursor: {
           userId: 'current_user',
@@ -226,11 +387,65 @@ const RealTimeCollaboration: React.FC = () => {
           position: { x, y },
           selection,
           color: '#10B981',
-          lastSeen: new Date()
+          lastSeen: new Date().toISOString()
+
         }
-      }));
+      });
     }
   };
+  
+  const broadcastSchemaChange = (changeType: string, data: any) => {
+    if (isConnected) {
+      sendMessage({
+        type: 'schema_change',
+        changeType,
+        data,
+        userId: 'current_user',
+        username: 'current_user',
+        timestamp: new Date().toISOString()
+      });
+    }
+  };
+
+ 
+
+  // Real-time workspace synchronization
+  useEffect(() => {
+    if (currentPlan === 'ultimate' && currentSchema.isShared) {
+      const syncInterval = setInterval(async () => {
+        try {
+          // Fetch latest workspace data from MongoDB
+          const workspaceMembers = await mongoService.getWorkspaceMembers(currentSchema.id);
+          const workspaceInvitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
+          
+          // Update local state with fresh data
+          setCollaborators(workspaceMembers.map(member => ({
+            userId: member.id,
+            username: member.username,
+            role: member.role as 'admin' | 'editor' | 'viewer',
+            status: 'online' as const,
+            currentAction: 'Working on schema',
+            joinedAt: member.joinedAt
+          })));
+          
+         setCollaborationStatus(prev => ({
+  ...prev,
+  isConnected: true,
+  lastSync: new Date().toISOString(),
+  activeUsers: workspaceMembers.length
+}));
+        } catch (error) {
+          console.error('Failed to sync workspace:', error);
+          setCollaborationStatus(prev => ({
+            ...prev,
+            isConnected: false
+          }));
+        }
+      }, 10000); // Sync every 10 seconds
+
+      return () => clearInterval(syncInterval);
+    }
+  }, [currentPlan, currentSchema.isShared, currentSchema.id]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -328,13 +543,10 @@ const RealTimeCollaboration: React.FC = () => {
               </span>
             </div>
             
-            {/* Settings */}
-            <button
-              onClick={() => setShowPresencePanel(!showPresencePanel)}
-              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors duration-200"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <Users className="w-4 h-4" />
+              <span>{collaborators.length} active</span>
+            </div>
           </div>
         </div>
 
@@ -349,110 +561,330 @@ const RealTimeCollaboration: React.FC = () => {
             {connectionQuality}
           </span>
         </div>
+
+        {/* Enhanced Tabs */}
+        <div className="border-b border-gray-200 dark:border-gray-700 mt-6">
+          <nav className="flex space-x-8">
+            {[
+              { id: 'invite', name: 'Send Invitation', icon: UserPlus, color: 'text-blue-600 dark:text-blue-400' },
+              { id: 'accept', name: 'Accept Invitation', icon: Send, color: 'text-green-600 dark:text-green-400' },
+              { id: 'members', name: 'Team Members', icon: Users, color: 'text-purple-600 dark:text-purple-400' }
+            ].map(tab => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`
+                    flex items-center gap-2 py-3 px-1 border-b-2 font-medium text-sm transition-all duration-200
+                    ${activeTab === tab.id
+                      ? `border-purple-500 ${tab.color} bg-purple-50 dark:bg-purple-900/10 px-3 rounded-t-lg`
+                      : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 px-3 rounded-t-lg'
+                    }
+                  `}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.name}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Active Collaborators */}
-        <div className="space-y-4">
-          <h4 className="text-md font-medium text-gray-900 dark:text-white">
-            Active Collaborators ({collaborators.length})
-          </h4>
-          
-          <div className="space-y-3">
-            {collaborators.map(collaborator => (
-              <div
-                key={collaborator.userId}
-                className="flex items-center gap-3 p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
-              >
-                <div className="relative">
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20 rounded-full flex items-center justify-center text-lg">
-                    {collaborator.avatar || '👤'}
-                  </div>
-                  <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white dark:border-gray-800 ${getStatusColor(collaborator.status)}`} />
+      {/* Tab Content */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Send Invitation Tab */}
+        {activeTab === 'invite' && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-br from-white to-blue-50 dark:from-gray-800 dark:to-blue-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
+                  <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 </div>
-                
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {collaborator.username}
-                    </span>
-                    {getRoleIcon(collaborator.role)}
-                  </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">
-                    {collaborator.currentAction || 'Viewing workspace'}
-                  </div>
-                  <div className="text-xs text-gray-400">
-                    Joined {collaborator.joinedAt.toLocaleTimeString()}
+                <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Invite New Team Member
+                </h4>
+              </div>
+              
+              <div className="space-y-5">
+                {/* Username Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Username
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={inviteUsername}
+                      onChange={(e) => setInviteUsername(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
+                      placeholder="Enter username to invite"
+                      disabled={isInviting}
+                    />
+                    {isInviting && (
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                        <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                      </div>
+                    )}
                   </div>
                 </div>
-                
-                <div className="flex items-center gap-1">
-                  {collaborator.status === 'online' && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+
+                {/* Role Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Role & Permissions
+                  </label>
+                  <div className="grid grid-cols-1 gap-3">
+                    {[
+                      { value: 'editor', label: 'Editor', desc: 'Can modify tables, data, and workspace settings', icon: '✏️' },
+                      { value: 'viewer', label: 'Viewer', desc: 'Can only view the workspace, no editing permissions', icon: '👁️' }
+                    ].map(role => (
+                      <label key={role.value} className="relative">
+                        <input
+                          type="radio"
+                          name="role"
+                          value={role.value}
+                          checked={inviteRole === role.value}
+                          onChange={(e) => setInviteRole(e.target.value as 'editor' | 'viewer')}
+                          className="sr-only"
+                          disabled={isInviting}
+                        />
+                        <div className={`
+                          p-4 border-2 rounded-xl cursor-pointer transition-all duration-200
+                          ${inviteRole === role.value
+                            ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                          }
+                        `}>
+                          <div className="flex items-start gap-3">
+                            <span className="text-lg">{role.icon}</span>
+                            <div className="flex-1">
+                              <div className="font-medium text-gray-900 dark:text-white">{role.label}</div>
+                              <div className="text-sm text-gray-500 dark:text-gray-400">{role.desc}</div>
+                            </div>
+                            {inviteRole === role.value && (
+                              <Check className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Send Button */}
+                <button
+                  onClick={handleSendInvitation}
+                  disabled={isInviting || !inviteUsername.trim()}
+                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:shadow-none hover:scale-[1.02] disabled:scale-100"
+                >
+                  {isInviting ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Validating User...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-5 h-5" />
+                      Send Invitation
+                    </>
                   )}
+                </button>
+
+                {/* Error Message */}
+                {inviteError && (
+                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                      <p className="text-red-800 dark:text-red-200 text-sm font-medium">Error</p>
+                    </div>
+                    <p className="text-red-700 dark:text-red-300 text-sm mt-1">{inviteError}</p>
+                  </div>
+                )}
+
+                {/* Success Message */}
+                {inviteSuccess && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
+                      <p className="text-green-800 dark:text-green-200 text-sm font-medium">Success!</p>
+                    </div>
+                    <p className="text-green-700 dark:text-green-300 text-sm mb-3">{inviteSuccess}</p>
+                    {generatedCode && (
+                      <div className="bg-green-100 dark:bg-green-800/20 rounded-lg p-3">
+                        <div className="flex items-center justify-between">
+                          <code className="text-lg font-mono font-bold text-green-800 dark:text-green-200">
+                            {generatedCode}
+                          </code>
+                          <button
+                            onClick={() => copyJoinCode(generatedCode)}
+                            className="p-2 text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200 hover:bg-green-200 dark:hover:bg-green-700/20 rounded-lg transition-colors duration-200"
+                            title="Copy join code"
+                          >
+                            {copiedCode === generatedCode ? (
+                              <Check className="w-4 h-4" />
+                            ) : (
+                              <Copy className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                          Code expires in 24 hours
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Accept Invitation Tab */}
+        {activeTab === 'accept' && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-br from-white to-green-50 dark:from-gray-800 dark:to-green-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-8 h-8 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center">
+                  <Send className="w-4 h-4 text-green-600 dark:text-green-400" />
+                </div>
+                <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Join a Workspace
+                </h4>
+              </div>
+              
+              <div className="space-y-5">
+                {/* Join Code Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Join Code
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                      className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-green-500 font-mono text-lg tracking-wider text-center transition-all duration-200"
+                      placeholder="XXXXXXXX"
+                      maxLength={8}
+                      disabled={isJoining}
+                    />
+                    {isJoining && (
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                        <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Join Button */}
+                <button
+                  onClick={handleAcceptInvitation}
+                  disabled={isJoining || !joinCode.trim() || joinCode.length !== 8}
+                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:shadow-none hover:scale-[1.02] disabled:scale-100"
+                >
+                  {isJoining ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Joining Workspace...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-5 h-5" />
+                      Join Workspace
+                    </>
+                  )}
+                </button>
+
+                {/* Error/Success Messages */}
+                {joinError && (
+                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                      <p className="text-red-800 dark:text-red-200 text-sm font-medium">Error</p>
+                    </div>
+                    <p className="text-red-700 dark:text-red-300 text-sm mt-1">{joinError}</p>
+                  </div>
+                )}
+
+                {joinSuccess && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
+                      <p className="text-green-800 dark:text-green-200 text-sm font-medium">Welcome!</p>
+                    </div>
+                    <p className="text-green-700 dark:text-green-300 text-sm mt-1">{joinSuccess}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Team Members Tab */}
+        {activeTab === 'members' && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-br from-white to-purple-50 dark:from-gray-800 dark:to-purple-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-purple-100 dark:bg-purple-900/20 rounded-lg flex items-center justify-center">
+                    <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    Team Members ({currentSchema.members.length})
+                  </h4>
                 </div>
               </div>
-            ))}
-          </div>
-
-          {/* Live Cursors Info */}
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <MousePointer className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <span className="font-medium text-blue-800 dark:text-blue-200">Live Cursors</span>
-            </div>
-            <div className="text-sm text-blue-700 dark:text-blue-300">
-              {cursors.length} active cursor{cursors.length !== 1 ? 's' : ''} on canvas
-            </div>
-            {cursors.map(cursor => (
-              <div key={cursor.userId} className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                {cursor.username} {cursor.selection ? `editing ${cursor.selection.tableId}` : 'browsing'}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Real-time Activity Feed */}
-        <div className="space-y-4">
-          <h4 className="text-md font-medium text-gray-900 dark:text-white">
-            Live Activity Feed
-          </h4>
-          
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {realtimeEvents.map(event => (
-              <div
-                key={event.id}
-                className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
-              >
-                <div className="text-lg">{getEventIcon(event.type)}</div>
-                <div className="flex-1">
-                  <div className="text-sm">
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {event.username}
-                    </span>
-                    <span className="text-gray-600 dark:text-gray-400 ml-1">
-                      {formatEventMessage(event)}
-                    </span>
+              
+              <div className="space-y-3">
+                {currentSchema.members.map(member => (
+                  <div key={member.id} className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all duration-200">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/20 dark:to-pink-900/20 rounded-full flex items-center justify-center">
+                        <Users className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-gray-900 dark:text-white">
+                            {member.username}
+                          </p>
+                          {member.username === 'current_user' && (
+                            <span className="text-xs bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full">
+                              You
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          Joined {member.joinedAt.toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`px-3 py-1 text-xs font-medium rounded-full ${getRoleBadgeColor(member.role)}`}>
+                        {member.role}
+                        {member.role === 'owner' && <Crown className="w-3 h-3 inline ml-1" />}
+                      </span>
+                      {member.role !== 'owner' && member.username !== 'current_user' && (
+                        <button
+                          onClick={() => removeMember(member.id)}
+                          className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200"
+                          title="Remove member"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {event.timestamp.toLocaleTimeString()}
-                  </div>
-                </div>
+                ))}
               </div>
-            ))}
-            
-            {realtimeEvents.length === 0 && (
-              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p>No recent activity</p>
-              </div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Collaboration Features */}
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="mt-6 grid grid-cols-1 gap-4">
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/10 dark:to-emerald-900/10 border border-green-200 dark:border-green-800 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-2">
             <Wifi className="w-4 h-4 text-green-600 dark:text-green-400" />

@@ -5,6 +5,7 @@ import { Editor } from '@monaco-editor/react';
 import { Play, Save, RotateCcw, AlertCircle, CheckCircle, Download, XCircle } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
 import { useDatabase } from '../../../context/DatabaseContext';
+import { useSubscription } from '../../../context/SubscriptionContext';
 
 interface SQLError {
   line: number;
@@ -32,9 +33,12 @@ interface ExecutionResult {
 }
 
 const LiveSQLEditor: React.FC = () => {
+
+    
   const { isDark } = useTheme();
   const { currentSchema, executeSQL, addTable, updateTable, removeTable } = useDatabase();
-  
+  const { isLimitReached, setShowUpgradeModal, setUpgradeReason } = useSubscription(); // ← və burada
+
   const [sql, setSql] = useState(`-- Live SQL Editor
 -- Changes are applied automatically to your schema
 
@@ -231,6 +235,13 @@ CREATE TABLE users (
     const columns = parseColumnDefinitions(statement);
     
     if (tableName && columns.length > 0) {
+      // Check table limit before allowing creation
+      if (isLimitReached('maxTables', currentSchema.tables.length)) {
+        setUpgradeReason('Reached max tables — upgrade to add more.');
+        setShowUpgradeModal(true);
+        throw new Error('You have reached the maximum number of tables for your plan. Upgrade to create more tables.');
+      }
+
       const tableData = {
         name: tableName,
         columns: columns.map(col => ({ ...col, id: crypto.randomUUID() })),
@@ -313,7 +324,7 @@ CREATE TABLE users (
         
         timeoutRef.current = setTimeout(() => {
           parseAndExecuteSQL(value);
-        }, 1000);
+        }, 2000); // Increased debounce time for better UX
       }
     }
   }, [autoExecute, validateSQL, parseAndExecuteSQL]);

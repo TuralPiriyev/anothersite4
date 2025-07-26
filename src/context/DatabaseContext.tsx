@@ -985,6 +985,8 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     loadSchema,
     saveSchema,
     generateSQL,
+    // Add missing addRelationship import
+    // addRelationship,
   };
 
   return (
@@ -1127,6 +1129,8 @@ function generateMongoDBScript(tables: Table[]): string {
         properties: {}
       }
     };
+    
+
     
     table.columns.forEach(col => {
       schema.$jsonSchema.properties[col.name] = {

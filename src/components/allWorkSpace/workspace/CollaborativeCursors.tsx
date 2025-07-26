@@ -86,3 +86,4 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
 };
 
 export default CollaborativeCursors;
+export type { CursorData };

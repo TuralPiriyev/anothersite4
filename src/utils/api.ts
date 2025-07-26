@@ -1,8 +1,15 @@
 // src/utils/api.ts
 import axios from 'axios';
 
-axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:5000';
 axios.defaults.withCredentials = true;
+
+// Log API configuration in development
+if (import.meta.env.DEV) {
+  console.log('🔧 API Configuration:');
+  console.log(`📡 Base URL: ${axios.defaults.baseURL}`);
+  console.log(`🍪 With Credentials: ${axios.defaults.withCredentials}`);
+}
 
 // Request interceptor for adding auth token
 axios.interceptors.request.use(config => {

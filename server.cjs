@@ -12,8 +12,17 @@ const crypto     = require('crypto');
 const axios      = require('axios');
 const cron       = require('node-cron')
 const cookieParser = require('cookie-parser')
+const expressWs  = require('express-ws');
 // Load env
 dotenv.config();
+
+// Log server configuration
+console.log('🔧 Server Configuration:');
+console.log(`📡 Port: ${process.env.SERVER_PORT || 5000}`);
+console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'}`);
+console.log(`📧 SMTP: ${process.env.SMTP_HOST || 'Not configured'}`);
+console.log(`💳 PayPal: ${process.env.PAYPAL_CLIENT_ID ? 'Configured' : 'Not configured'}`);
 
 // Models & middleware
 const User            = require('./src/models/User.cjs');
@@ -30,6 +39,9 @@ const SMTP_PORT      = Number(process.env.SMTP_PORT);
 
 // Express setup
 const app = express();
+// server.cjs, app = express() çağırıldıqdan sonra
+const wsInstance = expressWs(app); 
+
 
 app.use(cors({
   origin: [FRONTEND_ORIGIN],
@@ -53,6 +65,23 @@ mongoose
 
 // Portfolio routes (protected)
 app.use('/api/portfolios', authenticate, portfolioRoutes);
+
+// server.cjs
+// mövcud require-lərin altında
+// WorkspaceModel yoxdusa, biz Member modelindən istifadə edib,
+// üzvlüyü olan workspaces ID-lərini qaytara bilərik.
+app.get('/api/workspaces', authenticate, async (req, res) => {
+  try {
+    const username = req.query.username;
+    if (!username) return res.status(400).json({ error: 'username is required' });
+    const memberships = await Member.find({ username }, 'workspaceId role').lean();
+    return res.json(memberships);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 app.get('/api/users/me', authenticate, async (req, res) => {
   try {
@@ -720,6 +749,41 @@ app.post('/api/paypal/capture-order', async (req, res) => {
   } else {
     return res.status(500).json({ success: false, error: 'Capture failed' });
   }
+});
+
+app.ws('/ws/collaboration/:schemaId', (ws, req) => {
+  const { schemaId } = req.params;
+  console.log(`Yeni socket açıldı: ${schemaId}`);
+
+  ws.on('message', msg => {
+    wsInstance.getWss().clients.forEach(client => {
+      if (client !== ws && client.readyState === 1) {
+        client.send(msg);
+      }
+    });
+  });
+
+  ws.on('close', () => {
+    console.log(`Socket bağlandı: ${schemaId}`);
+  });
+});
+// server.cjs (express-ws konfiqurasiyasından sonra)
+app.ws('/ws/portfolio-updates', (ws, req) => {
+  console.log('➿ Client subscribed to portfolio-updates');
+
+  // Nümunə: maqəzaları broadcast etmək üçün:
+  ws.on('message', msg => {
+    // Gələn portfolio yenilənməsini bütün digər client-lərə yolla
+    wsInstance.getWss().clients.forEach(client => {
+      if (client !== ws && client.readyState === 1) {
+        client.send(msg);
+      }
+    });
+  });
+
+  ws.on('close', () => {
+    console.log('❌ portfolio-updates socket closed');
+  });
 });
 
 const distPath = path.join(__dirname, "dist");

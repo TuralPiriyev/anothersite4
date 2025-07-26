@@ -5,6 +5,26 @@ interface WebSocketMessage {
   data?: any;
   userId?: string;
   timestamp?: string;
+  username?: string;
+  schemaId?: string;
+  cursor?: {
+    userId: string;
+    username: string;
+    position: { x: number; y: number };
+    selection?: any;
+    color: string;
+    lastSeen: string;
+  };
+  changeType?: string;
+  position?: { x: number; y: number };
+}
+
+interface WebSocketState {
+  socket: WebSocket | null;
+  isConnected: boolean;
+  isConnecting: boolean;
+  error: string | null;
+  lastMessage: WebSocketMessage | null;
 }
 
 interface UseWebSocketOptions {
@@ -16,27 +36,40 @@ interface UseWebSocketOptions {
   onMessage?: (message: WebSocketMessage) => void;
   reconnectAttempts?: number;
   reconnectInterval?: number;
+  autoConnect?: boolean;
 }
 
-interface WebSocketState {
-  socket: WebSocket | null;
-  isConnected: boolean;
-  isConnecting: boolean;
-  error: string | null;
-  lastMessage: WebSocketMessage | null;
-}
+// WebSocket portu və URL-i düzəltmək
+const getWebSocketUrl = (path: string) => {
+  // Development zamanı ayrı WebSocket portu istifadə et
+  if (import.meta.env.DEV) {
+    const wsPort = import.meta.env.VITE_WS_PORT || '8080';
+    return `ws://localhost:${wsPort}${path}`;
+  }
+  
+  // Production zamanı eyni hostdan istifadə et
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  return `${protocol}//${host}${path}`;
+};
 
 export const useWebSocket = (options: UseWebSocketOptions) => {
   const {
-    url,
+    url: rawUrl,
     protocols,
     onOpen,
     onClose,
     onError,
     onMessage,
     reconnectAttempts = 5,
-    reconnectInterval = 3000
+    reconnectInterval = 3000,
+    autoConnect = true
   } = options;
+
+  // URL-i düzəlt
+  const url = rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://')
+    ? rawUrl
+    : getWebSocketUrl(rawUrl);
 
   const [state, setState] = useState<WebSocketState>({
     socket: null,
@@ -50,16 +83,26 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
   const reconnectCountRef = useRef(0);
   const shouldReconnectRef = useRef(true);
 
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log('🔧 WebSocket Configuration:');
+      console.log(`📡 URL: ${url}`);
+      console.log(`🔄 Auto Connect: ${autoConnect}`);
+      console.log(`🔁 Reconnect Attempts: ${reconnectAttempts}`);
+    }
+  }, [url, autoConnect, reconnectAttempts]);
+
   const connect = useCallback(() => {
     if (state.isConnecting || state.isConnected) return;
 
-    setState(prev => ({ ...prev, isConnecting: true, error: null }));
+    setState((prev: WebSocketState) => ({ ...prev, isConnecting: true, error: null }));
 
     try {
       const socket = new WebSocket(url, protocols);
 
       socket.onopen = (event) => {
-        setState(prev => ({
+        console.log('✅ WebSocket connected:', url);
+        setState((prev: WebSocketState) => ({
           ...prev,
           socket,
           isConnected: true,
@@ -71,7 +114,8 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
       };
 
       socket.onclose = (event) => {
-        setState(prev => ({
+        console.log('❌ WebSocket closed:', event.code, event.reason);
+        setState((prev: WebSocketState) => ({
           ...prev,
           socket: null,
           isConnected: false,
@@ -80,9 +124,9 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
 
         onClose?.(event);
 
-        // Attempt reconnection if not manually closed
         if (shouldReconnectRef.current && reconnectCountRef.current < reconnectAttempts) {
           reconnectCountRef.current++;
+          console.log(`🔄 Reconnecting... Attempt ${reconnectCountRef.current}/${reconnectAttempts}`);
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
           }, reconnectInterval);
@@ -90,7 +134,8 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
       };
 
       socket.onerror = (event) => {
-        setState(prev => ({
+        console.error('❌ WebSocket error:', event);
+        setState((prev: WebSocketState) => ({
           ...prev,
           error: 'WebSocket connection error',
           isConnecting: false
@@ -101,7 +146,7 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
       socket.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
-          setState(prev => ({ ...prev, lastMessage: message }));
+          setState((prev: WebSocketState) => ({ ...prev, lastMessage: message }));
           onMessage?.(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
@@ -109,17 +154,18 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
       };
 
     } catch (error) {
-      setState(prev => ({
+      console.error('Failed to create WebSocket connection:', error);
+      setState((prev: WebSocketState) => ({
         ...prev,
         error: 'Failed to create WebSocket connection',
         isConnecting: false
       }));
     }
-  }, [url, protocols, onOpen, onClose, onError, onMessage, reconnectAttempts, reconnectInterval]);
+  }, [url, protocols, onOpen, onClose, onError, onMessage, reconnectAttempts, reconnectInterval, state.isConnecting, state.isConnected]);
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false;
-    
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }
@@ -139,6 +185,7 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
         return false;
       }
     }
+    console.warn('WebSocket not connected, message not sent:', message);
     return false;
   }, [state.socket, state.isConnected]);
 
@@ -150,12 +197,14 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
   }, [connect, disconnect]);
 
   useEffect(() => {
-    connect();
+    if (autoConnect) {
+      connect();
+    }
 
     return () => {
       disconnect();
     };
-  }, [connect, disconnect]);
+  }, [connect, disconnect, autoConnect]);
 
   return {
     ...state,

@@ -3,13 +3,13 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "concurrently \"npm run server\" \"vite\"",
-    "build": "vite build",
-    "lint": "eslint .",
-    "server": "cross-env SERVER_PORT=5000 node server.cjs",
-    "preview": "vite preview",
-    "start": "node server.cjs"
+ "scripts": {
+    "dev":        "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "dev:client": "vite",
+    "dev:server": "nodemon server.cjs",
+    "start":      "node server.cjs",
+    "build":      "vite build",
+    "preview":    "vite preview"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -22,6 +22,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
+    "express-ws": "^5.0.2",
     "file": "^0.2.2",
     "framer-motion": "^11.0.3",
     "jsonwebtoken": "^9.0.2",
@@ -30,6 +31,7 @@
     "moongose": "^1.0.0",
     "node-cron": "^4.2.0",
     "nodemailer": "^7.0.3",
+    "nodemon": "^2.0.20",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-draggable": "^4.4.6",
@@ -55,7 +57,7 @@
     "@types/uuid": "^9.0.8",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.21",
-    "concurrently": "^9.1.2",
+    "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
     "eslint": "^9.30.1",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",

@@ -9,13 +9,13 @@ import ReactFlow, {
   Background,
   BackgroundVariant,
   useReactFlow,
-  addEdge,
   NodeProps,
   ReactFlowProvider,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useDatabase } from '../../../context/DatabaseContext';
 import TableNode from './TableNode';
+import { collaborationService } from '../../../services/collaborationService';
 
 interface DatabaseCanvasProps {
   zoom: number;
@@ -25,7 +25,7 @@ interface DatabaseCanvasProps {
 }
 
 const nodeTypes = {
-table: TableNode as React.ComponentType<NodeProps>,
+  table: TableNode as React.ComponentType<NodeProps>,
 };
 
 const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({ 
@@ -34,7 +34,7 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
   onPanChange, 
   onZoomChange 
 }) => {
-  const { currentSchema, updateTable, addRelationship } = useDatabase();
+  const { currentSchema, updateTable, addRelationship, syncWorkspaceWithMongoDB } = useDatabase();
   const { setViewport, getViewport } = useReactFlow();
 
   // Convert database tables to React Flow nodes
@@ -98,7 +98,7 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
     setEdges(newEdges);
   }, [currentSchema.relationships, setEdges]);
 
-  // Zoom dəyişikliklərini izləmək
+  // Monitor zoom changes
   useEffect(() => {
     const currentViewport = getViewport();
     const newZoomPercentage = Math.round(currentViewport.zoom * 100);
@@ -107,7 +107,7 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
     }
   }, [getViewport, onZoomChange, zoom]);
 
-  // External zoom dəyişikliklərini tətbiq etmək
+  // Apply external zoom changes
   useEffect(() => {
     const currentViewport = getViewport();
     const targetZoom = zoom / 100;
@@ -123,13 +123,26 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
   const onConnect = useCallback(
     (params: Connection) => {
       if (params.source && params.target && params.sourceHandle && params.targetHandle) {
-        addRelationship({
+        const newRelationship = {
           sourceTableId: params.source,
           sourceColumnId: params.sourceHandle,
           targetTableId: params.target,
           targetColumnId: params.targetHandle,
-          cardinality: '1:N',
-        });
+          cardinality: '1:N' as const,
+        };
+        
+        // Add relationship locally
+        addRelationship(newRelationship);
+        
+        // Broadcast to other users if collaboration is connected
+        if (collaborationService.isConnected()) {
+          collaborationService.sendSchemaChange({
+            type: 'relationship_added',
+            data: { relationship: newRelationship },
+            userId: 'current_user',
+            timestamp: new Date()
+          });
+        }
       }
     },
     [addRelationship]
@@ -137,12 +150,25 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
 
   const onNodeDragStop = useCallback(
     (_event: React.MouseEvent, node: Node) => {
-      updateTable(node.id, { position: node.position });
+      const updates = { position: node.position };
+      
+      // Update table position locally
+      updateTable(node.id, updates);
+      
+      // Broadcast to other users if collaboration is connected
+      if (collaborationService.isConnected()) {
+        collaborationService.sendSchemaChange({
+          type: 'table_updated',
+          data: { tableId: node.id, updates },
+          userId: 'current_user',
+          timestamp: new Date()
+        });
+      }
     },
     [updateTable]
   );
 
-  // Viewport dəyişikliklərini izləmək
+  // Monitor viewport changes
   const onMove = useCallback(
     (_event: any, viewport: any) => {
       const newZoomPercentage = Math.round(viewport.zoom * 100);
@@ -152,8 +178,22 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
     [onZoomChange, onPanChange]
   );
 
+  // Send cursor updates when mouse moves over canvas
+  const onMouseMove = useCallback(
+    (event: React.MouseEvent) => {
+      if (collaborationService.isConnected()) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        collaborationService.sendCursorUpdate({ x, y });
+      }
+    },
+    []
+  );
+
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full" onMouseMove={onMouseMove}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -168,6 +208,7 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
         defaultViewport={{ x: pan.x, y: pan.y, zoom: zoom / 100 }}
         minZoom={0.25}
         maxZoom={2}
+        className="bg-gray-50 dark:bg-gray-900"
       >
         <Controls 
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg [&>button]:border-0 [&>button]:bg-transparent [&>button]:text-gray-600 [&>button]:dark:text-gray-400 [&>button:hover]:bg-gray-100 [&>button:hover]:dark:bg-gray-700"

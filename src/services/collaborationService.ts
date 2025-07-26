@@ -1,5 +1,3 @@
-import { useWebSocket } from '../hooks/useWebSocket';
-
 export interface CollaborationUser {
   id: string;
   username: string;
@@ -22,48 +20,107 @@ export interface SchemaChange {
   timestamp: Date;
 }
 
-class CollaborationService {
-  private wsUrl: string;
+// WebSocket URL helper
+const getWebSocketUrl = (schemaId: string) => {
+  if (import.meta.env.DEV) {
+    const wsPort = import.meta.env.VITE_WS_PORT || '8080';
+    return `ws://localhost:${wsPort}/collaboration/${schemaId}`;
+  }
+  
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  return `${protocol}//${host}/ws/collaboration/${schemaId}`;
+};
+
+export default class CollaborationService {
+  private socket: WebSocket | null = null;
   private currentUser: CollaborationUser | null = null;
   private schemaId: string | null = null;
   private eventHandlers: Map<string, Function[]> = new Map();
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectInterval = 3000;
 
   constructor() {
-    this.wsUrl = process.env.NODE_ENV === 'production' 
-      ? 'wss://your-domain.com/ws' 
-      : 'ws://localhost:8080/ws';
+    // Constructor boş
   }
 
   initialize(user: CollaborationUser, schemaId: string) {
     this.currentUser = user;
     this.schemaId = schemaId;
+    console.log('🔧 CollaborationService initialized:', { user: user.username, schemaId });
   }
 
-  connect() {
-    if (!this.currentUser || !this.schemaId) {
-      throw new Error('Must initialize with user and schema ID before connecting');
-    }
+  connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.currentUser || !this.schemaId) {
+        const error = new Error('Must initialize with user and schema ID before connecting');
+        console.error('❌ Connection failed:', error.message);
+        reject(error);
+        return;
+      }
 
-    return useWebSocket({
-      url: `${this.wsUrl}/collaboration/${this.schemaId}`,
-      onOpen: () => {
-        this.sendMessage({
-          type: 'user_join',
-          data: {
-            user: this.currentUser,
-            schemaId: this.schemaId
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        console.log('✅ WebSocket already connected');
+        resolve();
+        return;
+      }
+
+      const url = getWebSocketUrl(this.schemaId);
+      console.log('🔗 Connecting to WebSocket:', url);
+      
+      try {
+        this.socket = new WebSocket(url);
+
+        this.socket.onopen = () => {
+          console.log('✅ WebSocket connected successfully');
+          this.reconnectAttempts = 0;
+          
+          // İstifadəçi qoşulma mesajı göndər
+          this.sendMessage({
+            type: 'user_join',
+            userId: this.currentUser!.id,
+            username: this.currentUser!.username,
+            schemaId: this.schemaId!
+          });
+          
+          this.emit('connected');
+          resolve();
+        };
+
+        this.socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            console.log('📨 Received message:', message.type);
+            this.handleMessage(message);
+          } catch (error) {
+            console.error('❌ Failed to parse message:', error);
           }
-        });
-        this.emit('connected');
-      },
-      onClose: () => {
-        this.emit('disconnected');
-      },
-      onError: (error) => {
-        this.emit('error', error);
-      },
-      onMessage: (message) => {
-        this.handleMessage(message);
+        };
+
+        this.socket.onclose = (event) => {
+          console.log('❌ WebSocket closed:', event.code, event.reason);
+          this.emit('disconnected');
+          
+          // Otomatik yenidən bağlanma
+          if (this.reconnectAttempts < this.maxReconnectAttempts) {
+            this.reconnectAttempts++;
+            console.log(`🔄 Reconnecting... Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+            setTimeout(() => {
+              this.connect();
+            }, this.reconnectInterval);
+          }
+        };
+
+        this.socket.onerror = (error) => {
+          console.error('❌ WebSocket error:', error);
+          this.emit('error', error);
+          reject(error);
+        };
+
+      } catch (error) {
+        console.error('❌ Failed to create WebSocket:', error);
+        reject(error);
       }
     });
   }
@@ -71,33 +128,50 @@ class CollaborationService {
   private handleMessage(message: any) {
     switch (message.type) {
       case 'user_joined':
-        this.emit('user_joined', message.data.user);
+        console.log('👋 User joined:', message.user?.username);
+        this.emit('user_joined', message.user);
         break;
+        
       case 'user_left':
-        this.emit('user_left', message.data.userId);
+        console.log('👋 User left:', message.userId);
+        this.emit('user_left', message.userId);
         break;
+        
       case 'cursor_update':
         this.emit('cursor_update', message.data);
         break;
+        
       case 'schema_change':
-        this.emit('schema_change', message.data);
+        console.log('🔄 Schema changed:', message.changeType);
+        this.emit('schema_change', message);
         break;
+        
       case 'user_selection':
         this.emit('user_selection', message.data);
         break;
+        
       case 'presence_update':
         this.emit('presence_update', message.data);
         break;
+        
+      case 'pong':
+        // Heartbeat response
+        break;
+        
+      default:
+        console.log('❓ Unknown message type:', message.type);
     }
   }
 
   sendCursorUpdate(position: CursorPosition) {
     this.sendMessage({
       type: 'cursor_update',
-      data: {
-        userId: this.currentUser?.id,
+      cursor: {
+        userId: this.currentUser!.id,
+        username: this.currentUser!.username,
         position,
-        timestamp: new Date().toISOString()
+        color: this.currentUser!.color,
+        lastSeen: new Date().toISOString()
       }
     });
   }
@@ -105,11 +179,10 @@ class CollaborationService {
   sendSchemaChange(change: SchemaChange) {
     this.sendMessage({
       type: 'schema_change',
-      data: {
-        ...change,
-        userId: this.currentUser?.id,
-        timestamp: new Date().toISOString()
-      }
+      changeType: change.type,
+      data: change.data,
+      userId: this.currentUser!.id,
+      timestamp: new Date().toISOString()
     });
   }
 
@@ -117,7 +190,7 @@ class CollaborationService {
     this.sendMessage({
       type: 'user_selection',
       data: {
-        userId: this.currentUser?.id,
+        userId: this.currentUser!.id,
         selection,
         timestamp: new Date().toISOString()
       }
@@ -128,7 +201,7 @@ class CollaborationService {
     this.sendMessage({
       type: 'presence_update',
       data: {
-        userId: this.currentUser?.id,
+        userId: this.currentUser!.id,
         status,
         currentAction,
         timestamp: new Date().toISOString()
@@ -137,8 +210,15 @@ class CollaborationService {
   }
 
   private sendMessage(message: any) {
-    // This would be implemented by the WebSocket hook
-    console.log('Sending message:', message);
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      try {
+        this.socket.send(JSON.stringify(message));
+      } catch (error) {
+        console.error('❌ Failed to send message:', error);
+      }
+    } else {
+      console.warn('⚠️ WebSocket not connected, message not sent:', message.type);
+    }
   }
 
   on(event: string, handler: Function) {
@@ -161,45 +241,66 @@ class CollaborationService {
   private emit(event: string, data?: any) {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
-      handlers.forEach(handler => handler(data));
-    }
-  }
-
-  disconnect() {
-    if (this.currentUser && this.schemaId) {
-      this.sendMessage({
-        type: 'user_leave',
-        data: {
-          userId: this.currentUser.id,
-          schemaId: this.schemaId
+      handlers.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error(`❌ Error in event handler for ${event}:`, error);
         }
       });
     }
   }
 
-  // Operational Transform helpers for conflict resolution
-  transformOperation(operation: any, otherOperation: any): any {
-    // Implement operational transform logic here
-    // This is a simplified version - real OT is more complex
+  disconnect() {
+    if (this.socket && this.currentUser) {
+      this.sendMessage({
+        type: 'user_leave',
+        userId: this.currentUser.id,
+        schemaId: this.schemaId
+      });
+    }
     
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+    
+    console.log('🔌 Disconnected from WebSocket');
+  }
+
+  // Utility methods
+  isConnected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  getConnectionState(): string {
+    if (!this.socket) return 'CLOSED';
+    
+    switch (this.socket.readyState) {
+      case WebSocket.CONNECTING: return 'CONNECTING';
+      case WebSocket.OPEN: return 'OPEN';
+      case WebSocket.CLOSING: return 'CLOSING';
+      case WebSocket.CLOSED: return 'CLOSED';
+      default: return 'UNKNOWN';
+    }
+  }
+
+  // Conflict resolution methods
+  transformOperation(operation: any, otherOperation: any): any {
     if (operation.type === 'table_update' && otherOperation.type === 'table_update') {
       if (operation.tableId === otherOperation.tableId) {
-        // Same table being edited - need to merge changes
         return this.mergeTableOperations(operation, otherOperation);
       }
     }
-    
     return operation;
   }
 
   private mergeTableOperations(op1: any, op2: any): any {
-    // Simplified merge logic
     return {
       ...op1,
       data: {
         ...op1.data,
         ...op2.data,
-        // Resolve conflicts by taking the latest timestamp
         lastModified: Math.max(
           new Date(op1.timestamp).getTime(),
           new Date(op2.timestamp).getTime()
@@ -208,24 +309,10 @@ class CollaborationService {
     };
   }
 
-  // Conflict resolution
   resolveConflict(localChange: any, remoteChange: any): any {
-    // Implement conflict resolution strategy
-    // For now, remote changes win (last-write-wins)
+    // Remote changes win (last-write-wins strategy)
     return remoteChange;
-  }
-
-  // Presence awareness
-  getActiveUsers(): CollaborationUser[] {
-    // Return list of currently active users
-    return [];
-  }
-
-  getUserCursor(userId: string): CursorPosition | null {
-    // Return cursor position for specific user
-    return null;
   }
 }
 
 export const collaborationService = new CollaborationService();
-export default collaborationService;

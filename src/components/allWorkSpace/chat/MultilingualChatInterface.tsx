@@ -396,6 +396,7 @@ const MultilingualChatInterface: React.FC = () => {
           </button>
         </div>
       </div>
+      
     </div>
   );
 };

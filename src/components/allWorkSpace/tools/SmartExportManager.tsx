@@ -4,6 +4,7 @@ import { Download, FileText,
       Check } from 'lucide-react';
 import { useDatabase } from '../../../context/DatabaseContext';
 import { useSubscription } from '../../../context/SubscriptionContext';
+import ExportModal from './ExportModal';
 
 interface ExportFormat {
   id: string;
@@ -42,6 +43,7 @@ const SmartExportManager: React.FC = () => {
     filename: string;
     size: string;
   }>>([]);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const exportFormats: ExportFormat[] = [
     {
@@ -109,12 +111,16 @@ const SmartExportManager: React.FC = () => {
   ];
 
   const handleExport = async () => {
-    const format = exportFormats.find(f => f.id === selectedFormat);
-    if (!format) return;
+    setShowExportModal(true);
+  };
+  
+  const executeExport = async (format: string, options: ExportOptions) => {
+    const formatConfig = exportFormats.find(f => f.id === format);
+    if (!formatConfig) return;
 
     // Check if format requires Pro
-    if (format.requiresPro && !canUseFeature('canExportSQL')) {
-      setUpgradeReason(`${format.name} export is available in Pro and Ultimate plans. Upgrade to export to ${format.name}.`);
+    if (formatConfig.requiresPro && !canUseFeature('canExportSQL')) {
+      setUpgradeReason(`${formatConfig.name} export is available in Pro and Ultimate plans. Upgrade to export to ${formatConfig.name}.`);
       setShowUpgradeModal(true);
       return;
     }
@@ -126,6 +132,9 @@ const SmartExportManager: React.FC = () => {
       let content = '';
       
       switch (selectedFormat) {
+        case 'csv':
+          content = generateCSVExport();
+          break;
         case 'json':
           content = generateJSONExport();
           break;
@@ -140,14 +149,14 @@ const SmartExportManager: React.FC = () => {
       }
 
       // Apply export options
-      if (exportOptions.formatOutput && selectedFormat !== 'json') {
+      if (options.formatOutput && selectedFormat !== 'json') {
         content = formatSQLOutput(content);
       }
 
       // Generate smart filename based on project name
       const projectName = currentSchema.name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
       const timestamp = new Date().toISOString().slice(0, 10);
-      const filename = `${projectName}_${timestamp}.${format.extension}`;
+      const filename = `${projectName}_${timestamp}.${formatConfig.extension}`;
 
       // Create and download file
       const blob = new Blob([content], { type: 'text/plain' });
@@ -163,16 +172,29 @@ const SmartExportManager: React.FC = () => {
       // Add to export history
       setExportHistory(prev => [{
         timestamp: new Date(),
-        format: format.name,
+        format: formatConfig.name,
         filename,
         size: formatFileSize(blob.size)
       }, ...prev.slice(0, 9)]); // Keep last 10 exports
 
+      setShowExportModal(false);
     } catch (error) {
       console.error('Export failed:', error);
     } finally {
       setIsExporting(false);
     }
+  };
+  
+  const generateCSVExport = (): string => {
+    let csv = 'Table,Column,Type,Nullable,Primary Key,Foreign Key,Default Value\n';
+    
+    currentSchema.tables.forEach(table => {
+      table.columns.forEach(column => {
+        csv += `"${table.name}","${column.name}","${column.type}",${column.nullable ? 'Yes' : 'No'},${column.isPrimaryKey ? 'Yes' : 'No'},${column.isForeignKey ? 'Yes' : 'No'},"${column.defaultValue || ''}"\n`;
+      });
+    });
+    
+    return csv;
   };
 
   const generateJSONExport = (): string => {
@@ -412,7 +434,7 @@ const SmartExportManager: React.FC = () => {
           ) : (
             <>
               <Download className="w-5 h-5" />
-              Export {exportFormats.find(f => f.id === selectedFormat)?.name}
+              Configure Export
             </>
           )}
         </button>
@@ -456,6 +478,17 @@ const SmartExportManager: React.FC = () => {
           </div>
         )}
       </div>
+      
+      {/* Export Modal */}
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        onExport={executeExport}
+        selectedFormat={selectedFormat}
+        exportOptions={exportOptions}
+        setExportOptions={setExportOptions}
+        projectName={currentSchema.name}
+      />
     </div>
   );
 };
