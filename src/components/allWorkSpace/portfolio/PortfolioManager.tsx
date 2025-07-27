@@ -5,6 +5,7 @@ import { useDatabase } from '../../../context/DatabaseContext';
 import { usePortfolio, Portfolio } from '../../../context/PortfolioContext';
 import { useWebSocket } from '../../../hooks/useWebSocket';
 import { mongoService } from '../../../services/mongoService';
+import { simpleWebSocketService } from '../../../services/simpleWebSocketService';
 import { SQLParser } from '../../../utils/sqlParser';
 
 const PortfolioManager: React.FC = () => {
@@ -29,19 +30,8 @@ const PortfolioManager: React.FC = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSQL, setImportSQL] = useState('');
   const [importError, setImportError] = useState('');
-  
-  // Real-time portfolio updates via WebSocket
-  const wsUrl = import.meta.env.DEV 
-    ? 'ws://localhost:8080/portfolio-updates'
-    : `wss://${window.location.host}/ws/portfolio-updates`;
-    
-  const { isConnected, sendMessage } = useWebSocket({
-    url: wsUrl,
-    onMessage: (message) => {
-      handlePortfolioUpdate(message);
-    },
-    autoConnect: true
-  });
+  const [portfolioConnectionId, setPortfolioConnectionId] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
   
   const handlePortfolioUpdate = (message: any) => {
     switch (message.type) {
@@ -73,7 +63,52 @@ const PortfolioManager: React.FC = () => {
   useEffect(() => {
     loadPortfolios();
     loadSharedSchemas();
+
+    // Initialize portfolio WebSocket connection
+    const initPortfolioWebSocket = () => {
+      const wsUrl = 'ws://localhost:5000/ws/portfolio-updates';
+      
+      try {
+        const connectionId = simpleWebSocketService.connect(wsUrl, {
+          onOpen: () => {
+            console.log('✅ Portfolio WebSocket connected');
+            setIsConnected(true);
+          },
+          onClose: () => {
+            console.log('❌ Portfolio WebSocket disconnected');
+            setIsConnected(false);
+          },
+          onMessage: (message) => {
+            console.log('📨 Portfolio message:', message);
+            handlePortfolioUpdate(message);
+          },
+          onError: (error) => {
+            console.error('❌ Portfolio WebSocket error:', error);
+          },
+          enableReconnect: false
+        });
+        setPortfolioConnectionId(connectionId);
+      } catch (error) {
+        console.error('Failed to initialize portfolio WebSocket:', error);
+      }
+    };
+
+    // Delay initialization
+    const timeoutId = setTimeout(initPortfolioWebSocket, 3000);
+
+    return () => {
+      clearTimeout(timeoutId);
+      if (portfolioConnectionId) {
+        simpleWebSocketService.disconnect(portfolioConnectionId);
+      }
+    };
   }, [loadPortfolios]);
+
+  const sendMessage = (message: any) => {
+    if (portfolioConnectionId) {
+      simpleWebSocketService.sendMessage(portfolioConnectionId, message);
+    }
+  };
   
   const loadSharedSchemas = async () => {
     try {

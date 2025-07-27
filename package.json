@@ -3,13 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
- "scripts": {
-    "dev":        "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\" \"npm run dev:websocket\"",
     "dev:client": "vite",
     "dev:server": "nodemon server.cjs",
-    "start":      "node server.cjs",
-    "build":      "vite build",
-    "preview":    "vite preview"
+    "dev:websocket": "node websocket-server.cjs",
+    "start": "node server.cjs",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -43,7 +44,8 @@
     "sql.js": "^1.13.0",
     "stripe": "^18.3.0",
     "tailwind": "^4.0.0",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",

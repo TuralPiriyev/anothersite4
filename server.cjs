@@ -32,7 +32,7 @@ const Invitation      = require('./src/models/Invitation.cjs');
 const Member          = require('./src/models/Member.cjs');
 
 // Config
-//const PORT           = process.env.SERVER_PORT    || 5000;
+const PORT           = process.env.SERVER_PORT    || 5000;
 const MONGO_URL      = process.env.MONGO_URL;
 const FRONTEND_ORIGIN= process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const SMTP_PORT      = Number(process.env.SMTP_PORT);
@@ -54,14 +54,30 @@ app.use(cookieParser());
 
 app.use(express.json());
 app.use(bodyParser.json());
-const PORT = process.env.SERVER_PORT || 5000;
 
 // dist qovluğunu həmişə təqdim et (yalnız production-da yox!)
-// MongoDB
-mongoose
-  .connect(MONGO_URL)
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch(err => { console.error('MongoDB error:', err); process.exit(1); });
+// MongoDB - Optional for development
+if (MONGO_URL) {
+  mongoose
+    .connect(MONGO_URL)
+    .then(() => console.log('✅ MongoDB connected'))
+    .catch(err => {
+      console.warn('⚠️ MongoDB connection failed:', err.message);
+      console.log('📡 Continuing without MongoDB (development mode)');
+    });
+} else {
+  console.log('📡 MongoDB not configured, running in development mode without database');
+}
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
 
 // Portfolio routes (protected)
 app.use('/api/portfolios', authenticate, portfolioRoutes);
@@ -753,36 +769,246 @@ app.post('/api/paypal/capture-order', async (req, res) => {
 
 app.ws('/ws/collaboration/:schemaId', (ws, req) => {
   const { schemaId } = req.params;
-  console.log(`Yeni socket açıldı: ${schemaId}`);
+  const clientId = `collab_${schemaId}_${Date.now()}`;
+  console.log(`👥 [${clientId}] Collaboration socket opened for schema: ${schemaId}`);
+
+  // Send welcome message
+  ws.send(JSON.stringify({
+    type: 'connection_established',
+    clientId,
+    schemaId,
+    timestamp: new Date().toISOString()
+  }));
+
+  // Reduced heartbeat interval
+  const heartbeat = setInterval(() => {
+    if (ws.readyState === 1) {
+      try {
+        ws.ping();
+      } catch (error) {
+        console.error(`👥 [${clientId}] Ping failed:`, error);
+        clearInterval(heartbeat);
+      }
+    } else {
+      console.log(`👥 [${clientId}] WebSocket not ready, clearing heartbeat`);
+      clearInterval(heartbeat);
+    }
+  }, 60000); // Increase to 60 seconds
 
   ws.on('message', msg => {
-    wsInstance.getWss().clients.forEach(client => {
-      if (client !== ws && client.readyState === 1) {
-        client.send(msg);
+    try {
+      const message = JSON.parse(msg.toString());
+      console.log(`👥 [${clientId}] Received message:`, message.type, message);
+      
+      // Enhanced message handling with proper validation and transformation
+      let broadcastMessage = null;
+      
+      switch (message.type) {
+        case 'cursor_update':
+          // Validate and transform cursor_update message
+          if (message.cursor && message.cursor.userId) {
+            broadcastMessage = {
+              type: 'cursor_update',
+              data: {
+                userId: message.cursor.userId,
+                username: message.cursor.username || 'Unknown User',
+                position: message.cursor.position || { x: 0, y: 0 },
+                color: message.cursor.color || '#3B82F6',
+                lastSeen: message.cursor.lastSeen || new Date().toISOString()
+              },
+              timestamp: new Date().toISOString(),
+              schemaId,
+              clientId
+            };
+          } else {
+            console.warn(`👥 [${clientId}] Invalid cursor_update message structure:`, message);
+          }
+          break;
+          
+        case 'user_join':
+          if (message.userId && message.username) {
+            broadcastMessage = {
+              type: 'user_joined',
+              user: {
+                id: message.userId,
+                username: message.username,
+                color: message.color || '#3B82F6'
+              },
+              timestamp: new Date().toISOString(),
+              schemaId,
+              clientId
+            };
+          }
+          break;
+          
+        case 'user_leave':
+          if (message.userId) {
+            broadcastMessage = {
+              type: 'user_left',
+              userId: message.userId,
+              timestamp: new Date().toISOString(),
+              schemaId,
+              clientId
+            };
+          }
+          break;
+          
+        case 'schema_change':
+          broadcastMessage = {
+            type: 'schema_change',
+            changeType: message.changeType,
+            data: message.data,
+            userId: message.userId,
+            timestamp: message.timestamp || new Date().toISOString(),
+            schemaId,
+            clientId
+          };
+          break;
+          
+        case 'user_selection':
+        case 'presence_update':
+          broadcastMessage = {
+            ...message,
+            timestamp: message.timestamp || new Date().toISOString(),
+            schemaId,
+            clientId
+          };
+          break;
+          
+        case 'ping':
+          // Respond to ping with pong
+          ws.send(JSON.stringify({
+            type: 'pong',
+            timestamp: new Date().toISOString(),
+            clientId
+          }));
+          return; // Don't broadcast ping messages
+          
+        default:
+          console.log(`👥 [${clientId}] Unknown message type: ${message.type}`);
+          broadcastMessage = {
+            ...message,
+            timestamp: new Date().toISOString(),
+            schemaId,
+            clientId
+          };
       }
-    });
+      
+      // Broadcast validated message to other clients in the same schema
+      if (broadcastMessage) {
+        const broadcastData = JSON.stringify(broadcastMessage);
+        let broadcastCount = 0;
+        
+        wsInstance.getWss().clients.forEach(client => {
+          if (client !== ws && client.readyState === 1) {
+            try {
+              client.send(broadcastData);
+              broadcastCount++;
+            } catch (error) {
+              console.error(`👥 [${clientId}] Failed to broadcast to client:`, error);
+            }
+          }
+        });
+        
+        console.log(`👥 [${clientId}] Broadcasted ${message.type} to ${broadcastCount} clients`);
+      }
+      
+    } catch (error) {
+      console.error(`👥 [${clientId}] Error processing message:`, error);
+    }
   });
 
-  ws.on('close', () => {
-    console.log(`Socket bağlandı: ${schemaId}`);
+  ws.on('close', (code, reason) => {
+    console.log(`👥 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason}`);
+    clearInterval(heartbeat);
+    
+    // Broadcast user_left if this was an unexpected disconnect
+    if (code !== 1000) { // Not a normal closure
+      const leaveMessage = JSON.stringify({
+        type: 'user_left',
+        clientId,
+        timestamp: new Date().toISOString(),
+        schemaId,
+        reason: 'unexpected_disconnect'
+      });
+      
+      wsInstance.getWss().clients.forEach(client => {
+        if (client.readyState === 1) {
+          try {
+            client.send(leaveMessage);
+          } catch (error) {
+            console.error(`👥 Failed to broadcast leave message:`, error);
+          }
+        }
+      });
+    }
+  });
+
+  ws.on('error', (error) => {
+    console.error(`👥 [${clientId}] Socket error:`, error);
+    clearInterval(heartbeat);
+  });
+
+  ws.on('pong', () => {
+    console.log(`👥 [${clientId}] Pong received`);
   });
 });
 // server.cjs (express-ws konfiqurasiyasından sonra)
 app.ws('/ws/portfolio-updates', (ws, req) => {
-  console.log('➿ Client subscribed to portfolio-updates');
+  const clientId = `portfolio_${Date.now()}`;
+  console.log(`📋 [${clientId}] Client subscribed to portfolio-updates`);
+
+  // Send welcome message
+  ws.send(JSON.stringify({
+    type: 'portfolio_connection_established',
+    clientId,
+    timestamp: new Date().toISOString()
+  }));
+
+  // Reduced heartbeat to prevent frequent disconnections
+  const heartbeat = setInterval(() => {
+    if (ws.readyState === 1) {
+      try {
+        ws.ping();
+      } catch (error) {
+        console.error(`📋 [${clientId}] Ping failed:`, error);
+        clearInterval(heartbeat);
+      }
+    } else {
+      console.log(`📋 [${clientId}] WebSocket not ready, clearing heartbeat`);
+      clearInterval(heartbeat);
+    }
+  }, 60000); // Increase to 60 seconds
 
   // Nümunə: maqəzaları broadcast etmək üçün:
   ws.on('message', msg => {
-    // Gələn portfolio yenilənməsini bütün digər client-lərə yolla
-    wsInstance.getWss().clients.forEach(client => {
-      if (client !== ws && client.readyState === 1) {
-        client.send(msg);
-      }
-    });
+    try {
+      const message = JSON.parse(msg.toString());
+      console.log(`📋 [${clientId}] Received message:`, message.type);
+      
+      // Gələn portfolio yenilənməsini bütün digər client-lərə yolla
+      wsInstance.getWss().clients.forEach(client => {
+        if (client !== ws && client.readyState === 1) {
+          client.send(msg);
+        }
+      });
+    } catch (error) {
+      console.error(`📋 [${clientId}] Error processing message:`, error);
+    }
   });
 
-  ws.on('close', () => {
-    console.log('❌ portfolio-updates socket closed');
+  ws.on('close', (code, reason) => {
+    console.log(`📋 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason}`);
+    clearInterval(heartbeat);
+  });
+
+  ws.on('error', (error) => {
+    console.error(`📋 [${clientId}] Socket error:`, error);
+    clearInterval(heartbeat);
+  });
+
+  ws.on('pong', () => {
+    console.log(`📋 [${clientId}] Pong received`);
   });
 });
 

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useSubscription } from '../../../context/SubscriptionContext';
 import { useDatabase } from '../../../context/DatabaseContext';
-import { useWebSocket } from '../../../hooks/useWebSocket';
+import { collaborationService, CollaborationUser } from '../../../services/collaborationService';
 import { mongoService } from '../../../services/mongoService';
 import api from '../../../utils/api';
 
@@ -100,40 +100,192 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
   // State for copied code feedback
   const [copiedCode, setCopiedCode] = useState('');
   
-  // Real WebSocket connection for collaboration
-  const wsUrl = import.meta.env.DEV 
-    ? `ws://localhost:8080/collaboration/${currentSchema.id}`
-    : `wss://${window.location.host}/ws/collaboration/${currentSchema.id}`;
-    
-  const { isConnected: socketConnected, sendMessage } = useWebSocket({
-    url: wsUrl,
-    onOpen: () => {
-      setIsConnected(true);
-      setConnectionQuality('excellent');
-      
-      // Send join event
-      sendMessage({
-        type: 'user_join',
-        userId: 'current_user',
-        username: 'current_user',
-        schemaId: currentSchema.id
-      });
-    },
-    onClose: () => {
-      setIsConnected(false);
-    },
-    onError: () => {
-      setConnectionQuality('poor');
-    },
-    onMessage: (message) => {
-      handleRealtimeMessage(message);
-    }
-  });
-  
-  // Sync connection state
+  // Monitor collaboration service status (don't create new connection)
   useEffect(() => {
-  setIsConnected(socketConnected);
-}, [socketConnected]);
+    if (currentPlan !== 'ultimate' || !currentSchema?.id) {
+      setIsConnected(false);
+      // Dispatch disconnection event to MainLayout
+      window.dispatchEvent(new CustomEvent('collaboration-event', {
+        detail: { type: 'connection_status', data: { connected: false } }
+      }));
+      return;
+    }
+
+    // Initialize collaboration service for this component
+    const initializeCollaboration = async () => {
+      try {
+        // Create a demo user for collaboration
+        const demoUser: CollaborationUser = {
+          id: `user_${Date.now()}`,
+          username: `user_${Math.random().toString(36).substr(2, 8)}`,
+          role: 'editor',
+          color: `hsl(${Math.random() * 360}, 70%, 50%)`
+        };
+
+        // Initialize and connect collaboration service
+        collaborationService.initialize(demoUser, currentSchema.id);
+
+        // Set up event handlers for this component's state
+        const handleConnected = () => {
+          setIsConnected(true);
+          setConnectionQuality('excellent');
+          setCollaborationStatus(prev => ({
+            ...prev,
+            isConnected: true,
+            lastSync: new Date().toISOString()
+          }));
+          
+          // Dispatch connection event to MainLayout
+          window.dispatchEvent(new CustomEvent('collaboration-event', {
+            detail: { type: 'connection_status', data: { connected: true } }
+          }));
+        };
+
+        const handleDisconnected = () => {
+          setIsConnected(false);
+          setCollaborationStatus(prev => ({ ...prev, isConnected: false }));
+          
+          // Dispatch disconnection event to MainLayout
+          window.dispatchEvent(new CustomEvent('collaboration-event', {
+            detail: { type: 'connection_status', data: { connected: false } }
+          }));
+        };
+
+        const handleUserJoined = (user: CollaborationUser) => {
+          console.log('👋 User joined collaboration:', user.username);
+          addRealtimeEvent('user_joined', user.id, user.username, user);
+          
+          setCollaborators(prev => {
+            const exists = prev.find(c => c.userId === user.id);
+            if (!exists) {
+              return [...prev, {
+                userId: user.id,
+                username: user.username,
+                role: user.role as any,
+                status: 'online' as const,
+                currentAction: 'Working on schema',
+                joinedAt: new Date()
+              }];
+            }
+            return prev;
+          });
+        };
+
+        const handleUserLeft = (userId: string) => {
+          console.log('👋 User left collaboration:', userId);
+          setCollaborators(prev => prev.filter(c => c.userId !== userId));
+          setCursors(prev => prev.filter(c => c.userId !== userId));
+          addRealtimeEvent('user_left', userId, 'User', {});
+          
+          // Dispatch user left event to MainLayout
+          window.dispatchEvent(new CustomEvent('collaboration-event', {
+            detail: { type: 'user_left', data: { userId } }
+          }));
+        };
+
+        const handleCursorUpdate = (cursor: any) => {
+          if (cursor && 
+              typeof cursor === 'object' && 
+              cursor.userId && 
+              typeof cursor.userId === 'string') {
+            setCursors(prev => {
+              const existing = prev.findIndex(c => c.userId === cursor.userId);
+              const cursorData = {
+                userId: cursor.userId,
+                username: cursor.username || 'Unknown',
+                position: cursor.position || { x: 0, y: 0 },
+                selection: cursor.selection,
+                color: cursor.color || '#3B82F6',
+                lastSeen: new Date(cursor.lastSeen || Date.now())
+              };
+
+              if (existing >= 0) {
+                const updated = [...prev];
+                updated[existing] = cursorData;
+                return updated;
+              }
+              return [...prev, cursorData];
+            });
+            
+            // Dispatch cursor update event to MainLayout
+            window.dispatchEvent(new CustomEvent('collaboration-event', {
+              detail: { type: 'cursor_update', data: cursor }
+            }));
+          } else {
+            console.warn('⚠️ Invalid cursor data in RealTimeCollaboration:', cursor);
+          }
+        };
+
+        const handleSchemaChange = (message: any) => {
+          console.log('🔄 Schema change received:', message);
+          handleSchemaChangeEvent(message);
+          addRealtimeEvent(message.changeType, message.userId, message.username || 'User', message.data);
+        };
+
+        const handleError = (error: any) => {
+          console.error('❌ Collaboration error:', error);
+          setConnectionQuality('poor');
+        };
+
+        // Register event handlers
+        collaborationService.on('connected', handleConnected);
+        collaborationService.on('disconnected', handleDisconnected);
+        collaborationService.on('user_joined', handleUserJoined);
+        collaborationService.on('user_left', handleUserLeft);
+        collaborationService.on('cursor_update', handleCursorUpdate);
+        collaborationService.on('schema_change', handleSchemaChange);
+        collaborationService.on('error', handleError);
+
+        // Connect to collaboration service
+        await collaborationService.connect();
+
+        // Cleanup
+        return () => {
+          collaborationService.off('connected', handleConnected);
+          collaborationService.off('disconnected', handleDisconnected);
+          collaborationService.off('user_joined', handleUserJoined);
+          collaborationService.off('user_left', handleUserLeft);
+          collaborationService.off('cursor_update', handleCursorUpdate);
+          collaborationService.off('schema_change', handleSchemaChange);
+          collaborationService.off('error', handleError);
+          collaborationService.disconnect();
+        };
+
+      } catch (error) {
+        console.error('Failed to initialize collaboration:', error);
+        setIsConnected(false);
+        setConnectionQuality('poor');
+        
+        // Dispatch error connection event to MainLayout
+        window.dispatchEvent(new CustomEvent('collaboration-event', {
+          detail: { type: 'connection_status', data: { connected: false } }
+        }));
+      }
+    };
+
+    // Small delay to prevent connection spam
+    const timeoutId = setTimeout(initializeCollaboration, 500);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [currentPlan, currentSchema?.id]);
+
+  // Listen for cursor move events from MainLayout
+  useEffect(() => {
+    const handleCursorMove = (event: CustomEvent) => {
+      const { position } = event.detail;
+      if (position && isConnected && collaborationService.isConnectedState()) {
+        collaborationService.sendCursorUpdate(position);
+      }
+    };
+
+    window.addEventListener('cursor-move', handleCursorMove as EventListener);
+
+    return () => {
+      window.removeEventListener('cursor-move', handleCursorMove as EventListener);
+    };
+  }, [isConnected]);
 
   // Real database collaboration functions
   const handleSendInvitation = async () => {
@@ -293,50 +445,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     }
   };
 
-  const handleRealtimeMessage = (message: any) => {
-    switch (message.type) {
-      case 'user_joined':
-        setCollaborators(prev => {
-          const exists = prev.find(c => c.userId === message.user.userId);
-          if (!exists) {
-            return [...prev, message.user];
-          }
-          return prev;
-        });
-        addRealtimeEvent('user_joined', message.user.userId, message.user.username, message.data);
-        break;
-        
-      case 'user_left':
-        setCollaborators(prev => prev.filter(c => c.userId !== message.userId));
-        setCursors(prev => prev.filter(c => c.userId !== message.userId));
-        addRealtimeEvent('user_left', message.userId, message.username, message.data);
-        break;
-        
-      case 'cursor_update':
-        setCursors(prev => {
-          const existing = prev.findIndex(c => c.userId === message.userId);
-          if (existing >= 0) {
-            const updated = [...prev];
-            updated[existing] = { ...updated[existing], ...message.cursor };
-            return updated;
-          }
-          return [...prev, message.cursor];
-        });
-        break;
-        
-      case 'schema_change':
-        // Apply real schema changes from other users
-        handleSchemaChange(message);
-        addRealtimeEvent(message.changeType, message.userId, message.username, message.data);
-        break;
-        
-      case 'pong':
-        // Heartbeat response
-        break;
-    }
-  };
-  
-  const handleSchemaChange = (message: any) => {
+  const handleSchemaChangeEvent = (message: any) => {
     const { changeType, data } = message;
     
     switch (changeType) {
@@ -378,31 +487,23 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
   };
 
   const broadcastCursorPosition = (x: number, y: number, selection?: any) => {
-    if (isConnected) {
-      sendMessage({
-        type: 'cursor_update',
-        cursor: {
-          userId: 'current_user',
-          username: 'current_user',
-          position: { x, y },
-          selection,
-          color: '#10B981',
-          lastSeen: new Date().toISOString()
-
-        }
+    if (isConnected && collaborationService.isConnectedState()) {
+      collaborationService.sendCursorUpdate({
+        x,
+        y,
+        tableId: selection?.tableId,
+        columnId: selection?.columnId
       });
     }
   };
   
   const broadcastSchemaChange = (changeType: string, data: any) => {
-    if (isConnected) {
-      sendMessage({
-        type: 'schema_change',
-        changeType,
+    if (isConnected && collaborationService.isConnectedState()) {
+      collaborationService.sendSchemaChange({
+        type: changeType as any,
         data,
         userId: 'current_user',
-        username: 'current_user',
-        timestamp: new Date().toISOString()
+        timestamp: new Date()
       });
     }
   };

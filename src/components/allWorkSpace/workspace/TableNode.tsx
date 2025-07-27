@@ -3,7 +3,6 @@ import { Handle, Position } from 'reactflow';
 import { Key, Link2, Trash2, MoreVertical, Database, Edit, Plus, Copy } from 'lucide-react';
 import { Table } from '../../../context/DatabaseContext';
 import { useDatabase } from '../../../context/DatabaseContext';
-import { useWebSocket } from '../../../hooks/useWebSocket';
 
 interface TableNodeProps {
   data: Table;
@@ -16,27 +15,9 @@ const TableNode: React.FC<TableNodeProps> = memo(({ data, selected }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showAddRowModal, setShowAddRowModal] = useState(false);
   const [newRowData, setNewRowData] = useState<Record<string, any>>({});
-  
-  // Real-time collaboration WebSocket
-  const { isConnected, sendMessage } = useWebSocket({
-    url: `ws://localhost:8080/collaboration/${currentSchema.id}`,
-    autoConnect: false // Only connect when needed
-  });
 
   const handleDeleteTable = () => {
     removeTable(data.id);
-    
-    // Broadcast table deletion to other users
-    if (isConnected) {
-      sendMessage({
-        type: 'schema_change',
-        changeType: 'table_deleted',
-        data: { tableId: data.id, tableName: data.name },
-        userId: 'current_user',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
     setShowDeleteConfirm(false);
     setShowMenu(false);
   };
@@ -54,18 +35,6 @@ const TableNode: React.FC<TableNodeProps> = memo(({ data, selected }) => {
 
   const handleSaveNewRow = () => {
     insertRow(data.id, newRowData);
-    
-    // Broadcast row insertion to other users
-    if (isConnected) {
-      sendMessage({
-        type: 'schema_change',
-        changeType: 'row_inserted',
-        data: { tableId: data.id, rowData: newRowData },
-        userId: 'current_user',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
     setShowAddRowModal(false);
     setNewRowData({});
   };
@@ -78,18 +47,6 @@ const TableNode: React.FC<TableNodeProps> = memo(({ data, selected }) => {
 
   const handleDuplicateTable = () => {
     duplicateTable(data.id);
-    
-    // Broadcast table duplication to other users
-    if (isConnected) {
-      sendMessage({
-        type: 'schema_change',
-        changeType: 'table_duplicated',
-        data: { originalTableId: data.id, tableName: data.name },
-        userId: 'current_user',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
     setShowMenu(false);
   };
 

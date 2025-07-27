@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Key, Link2, AlertCircle, Save, X, Edit3, ChevronDown } from 'lucide-react';
-import { useDatabase, Column, Table } from '../../../context/DatabaseContext';
+import { useDatabase, Column, Table, Relationship } from '../../../context/DatabaseContext';
 import { useSubscription } from '../../../context/SubscriptionContext';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -25,7 +25,7 @@ interface ValidationError {
 }
 
 const EnhancedTableBuilder: React.FC = () => {
-  const { currentSchema, addTable, updateTable } = useDatabase();
+  const { currentSchema, addTable, updateTable, addRelationship } = useDatabase();
   const { isLimitReached, setShowUpgradeModal, setUpgradeReason } = useSubscription();
   
   const [table, setTable] = useState<TableBuilderState>({
@@ -182,7 +182,6 @@ const EnhancedTableBuilder: React.FC = () => {
 
   const handleCreateOrUpdateTable = () => {
 
-   
 
     if (validationErrors.some(e => e.type === 'error')) return;
 
@@ -192,10 +191,10 @@ const EnhancedTableBuilder: React.FC = () => {
       setShowUpgradeModal(true);
       return;
     }
-     const tableId = editingTable?.id || uuidv4();
+    const tableId = editingTable?.id || uuidv4();
     const tableData = {
-      id: tableId, 
-     name: table.name,
+      id: tableId,
+      name: table.name,
       columns: table.columns.map(col => ({ 
         ...col, 
         id: uuidv4(),
@@ -609,7 +608,3 @@ const EnhancedTableBuilder: React.FC = () => {
 };
 
 export default EnhancedTableBuilder;
-
-function addRelationship(arg0: { sourceTableId: any; sourceColumnId: string; targetTableId: string; targetColumnId: string; cardinality: string; }) {
-    throw new Error('Function not implemented.');
-}

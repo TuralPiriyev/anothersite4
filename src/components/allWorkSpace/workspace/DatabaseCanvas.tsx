@@ -135,7 +135,7 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
         addRelationship(newRelationship);
         
         // Broadcast to other users if collaboration is connected
-        if (collaborationService.isConnected()) {
+        if (collaborationService.isConnected) {
           collaborationService.sendSchemaChange({
             type: 'relationship_added',
             data: { relationship: newRelationship },
@@ -156,7 +156,7 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
       updateTable(node.id, updates);
       
       // Broadcast to other users if collaboration is connected
-      if (collaborationService.isConnected()) {
+      if (collaborationService.isConnected) {
         collaborationService.sendSchemaChange({
           type: 'table_updated',
           data: { tableId: node.id, updates },
@@ -181,13 +181,14 @@ const DatabaseCanvasInner: React.FC<DatabaseCanvasProps> = ({
   // Send cursor updates when mouse moves over canvas
   const onMouseMove = useCallback(
     (event: React.MouseEvent) => {
-      if (collaborationService.isConnected()) {
-        const rect = event.currentTarget.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        
-        collaborationService.sendCursorUpdate({ x, y });
-      }
+      // Cursor tracking hələlik deaktiv
+      // if (collaborationService.isConnected()) {
+      //   const rect = event.currentTarget.getBoundingClientRect();
+      //   const x = event.clientX - rect.left;
+      //   const y = event.clientY - rect.top;
+      //   
+      //   collaborationService.sendCursorUpdate({ x, y });
+      // }
     },
     []
   );

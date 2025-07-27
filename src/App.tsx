@@ -10,6 +10,12 @@ import { MainPage } from './pages/MainPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 
+const routerOptions = {
+  future: {
+    v7_startTransition: true,
+    v7_relativeSplatPath: true,
+  },
+};
 
 function App() {
   return (
@@ -18,7 +24,7 @@ function App() {
       <PayPalScriptProvider /*options={{ 'client-id': process.env.PAYPAL_CLIENT_ID}}*/>
       <SubscriptionProvider>
         <PortfolioProvider>
-          <BrowserRouter>
+          <BrowserRouter {...routerOptions}>
             <Routes>
               <Route path="/" element={<AuthPage />} />
               <Route path="/verify" element={<VerificationPage />} />

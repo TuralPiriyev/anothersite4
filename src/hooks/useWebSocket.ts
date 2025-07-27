@@ -37,14 +37,14 @@ interface UseWebSocketOptions {
   reconnectAttempts?: number;
   reconnectInterval?: number;
   autoConnect?: boolean;
+  enableReconnect?: boolean;
 }
 
 // WebSocket portu və URL-i düzəltmək
 const getWebSocketUrl = (path: string) => {
-  // Development zamanı ayrı WebSocket portu istifadə et
+  // Development zamanı backend server portunu istifadə et
   if (import.meta.env.DEV) {
-    const wsPort = import.meta.env.VITE_WS_PORT || '8080';
-    return `ws://localhost:${wsPort}${path}`;
+    return `ws://localhost:5000${path}`;
   }
   
   // Production zamanı eyni hostdan istifadə et
@@ -61,9 +61,10 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
     onClose,
     onError,
     onMessage,
-    reconnectAttempts = 5,
-    reconnectInterval = 3000,
-    autoConnect = true
+    reconnectAttempts = 3,
+    reconnectInterval = 5000,
+    autoConnect = true,
+    enableReconnect = false
   } = options;
 
   // URL-i düzəlt
@@ -84,7 +85,7 @@ export const useWebSocket = (options: UseWebSocketOptions) => {
   const shouldReconnectRef = useRef(true);
 
   useEffect(() => {
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV && url.includes('/collaboration/')) {
       console.log('🔧 WebSocket Configuration:');
       console.log(`📡 URL: ${url}`);
       console.log(`🔄 Auto Connect: ${autoConnect}`);

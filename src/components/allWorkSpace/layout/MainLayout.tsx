@@ -4,9 +4,9 @@ import { Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import Header from './Header';
 import WorkspacePanel from '../panels/WorkspacePanel';
 import PortfolioPanel from '../panels/PortfolioPanel';
+import ToolsPanel from '../panels/ToolsPanel';
 import CollaborativeCursors, { CursorData } from '../workspace/CollaborativeCursors';
 import { useDatabase } from '../../../context/DatabaseContext';
-import { collaborationService, CollaborationUser } from '../../../services/collaborationService';
 
 const MainLayout: React.FC = () => {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
@@ -16,72 +16,62 @@ const MainLayout: React.FC = () => {
   const [collaborativeCursors, setCollaborativeCursors] = useState<CursorData[]>([]);
   const [isCollaborationConnected, setIsCollaborationConnected] = useState(false);
 
-  const { currentSchema, syncWorkspaceWithMongoDB } = useDatabase();
+  const { currentSchema } = useDatabase();
 
   useEffect(() => {
-    // 1) Hazırki istifadəçi (real layihədə auth sistemi ilə gələcək)
-    const currentUser: CollaborationUser = {
-      id: `user_${Math.random().toString(36).substr(2, 9)}`,
-      username: 'Anonymous User',
-      role: 'editor',
-      color: `#${Math.floor(Math.random() * 0xFFFFFF).toString(16)}`
+    // Listen for collaboration events from RealTimeCollaboration component
+    // This prevents duplicate connections and event handler conflicts
+    
+    const handleCollaborationUpdate = (event: CustomEvent) => {
+      const { type, data } = event.detail;
+      
+      switch (type) {
+        case 'cursor_update':
+          // Enhanced validation for cursor data
+          if (data && 
+              typeof data === 'object' && 
+              data.userId && 
+              typeof data.userId === 'string' &&
+              data.userId.trim().length > 0) {
+            
+            setCollaborativeCursors(prev => {
+              const filtered = prev.filter(c => c.userId !== data.userId);
+              return [...filtered, {
+                userId: data.userId,
+                username: data.username || 'Unknown User',
+                position: data.position || { x: 0, y: 0 },
+                color: data.color || '#3B82F6',
+                lastSeen: data.lastSeen || new Date().toISOString()
+              }];
+            });
+          } else {
+            console.warn('⚠️ Invalid cursor data received in MainLayout:', data);
+          }
+          break;
+          
+        case 'user_left':
+          if (data && data.userId) {
+            setCollaborativeCursors(prev => prev.filter(c => c.userId !== data.userId));
+          }
+          break;
+          
+        case 'connection_status':
+          setIsCollaborationConnected(data.connected);
+          break;
+          
+        default:
+          // Handle other collaboration events if needed
+          break;
+      }
     };
 
-    // 2) service-i initialize elə və qoşul
-    collaborationService.initialize(currentUser, currentSchema.id);
+    // Listen for collaboration events from RealTimeCollaboration component
+    window.addEventListener('collaboration-event', handleCollaborationUpdate as EventListener);
 
-    collaborationService.on('connected', () => {
-      console.log('✅ Collaboration connected');
-      setIsCollaborationConnected(true);
-    });
-    collaborationService.on('disconnected', () => {
-      console.log('❌ Collaboration disconnected');
-      setIsCollaborationConnected(false);
-    });
-
-    collaborationService.on('schema_change', () => {
-      console.log('🔄 Schema changed, syncing…');
-      syncWorkspaceWithMongoDB();
-    });
-
-    collaborationService.on('cursor_update', (cursor: any) => {
-      const cd: CursorData = {
-        userId: cursor.userId,
-        username: cursor.username,
-        position: cursor.position,
-        color: cursor.color,
-        lastSeen: new Date(cursor.lastSeen)
-      };
-      setCollaborativeCursors(prev => {
-        const i = prev.findIndex(c => c.userId === cd.userId);
-        if (i >= 0) {
-          const arr = [...prev];
-          arr[i] = cd;
-          return arr;
-        }
-        return [...prev, cd];
-      });
-    });
-
-    collaborationService.on('user_joined', (user: CollaborationUser) => {
-      console.log('👤 Joined:', user.username);
-    });
-    collaborationService.on('user_left', (userId: string) => {
-      console.log('👤 Left:', userId);
-      setCollaborativeCursors(prev => prev.filter(c => c.userId !== userId));
-    });
-
-    collaborationService.on('error', err => {
-      console.error('❌ Collaboration error:', err);
-    });
-
-    collaborationService.connect();
-
-    // Cleanup
     return () => {
-      collaborationService.disconnect();
+      window.removeEventListener('collaboration-event', handleCollaborationUpdate as EventListener);
     };
-  }, [currentSchema.id, syncWorkspaceWithMongoDB]);
+  }, [currentSchema?.id]);
 
   // Panel toggles
   const toggleLeftPanel = () => setLeftPanelOpen(p => !p);
@@ -89,10 +79,18 @@ const MainLayout: React.FC = () => {
   const toggleLeftCollapse = () => setLeftPanelCollapsed(p => !p);
   const toggleRightCollapse = () => setRightPanelCollapsed(p => !p);
 
-  // Cursor move broadcast
+  // Cursor move broadcast - now handled via collaboration events
   const handleCursorMove = (pos: { x: number; y: number; tableId?: string; columnId?: string }) => {
-    if (isCollaborationConnected) {
-      collaborationService.sendCursorUpdate(pos);
+    // Only broadcast if collaboration is connected and we have a valid position
+    if (isCollaborationConnected && 
+        pos && 
+        typeof pos.x === 'number' && 
+        typeof pos.y === 'number') {
+      
+      // Dispatch cursor move event to RealTimeCollaboration component
+      window.dispatchEvent(new CustomEvent('cursor-move', {
+        detail: { position: pos }
+      }));
     }
   };
   
@@ -100,7 +98,7 @@ const MainLayout: React.FC = () => {
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900 transition-colors duration-200 relative">
       <Header />
       
-      {/* Collaboration Status Indicator */}
+      {/* Collaboration Status Indicator - Only show in development */}
       {import.meta.env.DEV && (
         <div className="fixed top-20 right-4 z-50">
           <div className={`px-3 py-1 rounded-full text-xs font-medium ${
@@ -180,6 +178,9 @@ const MainLayout: React.FC = () => {
               <X className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             </button>
           </div>
+          
+          {/* Tools Panel Content */}
+          <ToolsPanel collapsed={leftPanelCollapsed} />
         </div>
 
         {/* Center Panel - Workspace */}
