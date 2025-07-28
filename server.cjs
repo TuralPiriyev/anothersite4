@@ -45,12 +45,12 @@ const app = express();
 const wsInstance = expressWs(app); 
 
 
-app.use(cors({
-  origin: [FRONTEND_ORIGIN],
-  credentials: true,
-  allowedHeaders: ['Content-Type','Authorization'],
-  exposedHeaders: ['Authorization']
-}));
+app.use(
+  cors({
+    origin: 'https://startup-1-j563.onrender.com', // Frontend URL
+    credentials: true, // Cookie və ya sessiya məlumatlarını ötürmək üçün
+  })
+);
 
 app.use(cookieParser());
 
@@ -1254,3 +1254,14 @@ app.use((err, req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
    console.log(`✅ Server running on port ${PORT} (env: ${process.env.NODE_ENV})`);
  });
+
+
+// Axios konfiqurasiyası
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: 'https://startup-1-j563.onrender.com/api', // Backend API URL
+  withCredentials: true, // Sessiya məlumatlarını ötürmək üçün
+});
+
+export default api;

@@ -9,6 +9,8 @@ import { VerificationPage } from './components/auth/VerificationPage';
 import { MainPage } from './pages/MainPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
+import React, { useEffect } from 'react';
+import { checkAuth } from './utils/auth';
 
 const routerOptions = {
   future: {
@@ -18,6 +20,10 @@ const routerOptions = {
 };
 
 function App() {
+  useEffect(() => {
+    checkAuth(); // Sessiyanı yoxla
+  }, []);
+
   return (
     
     <AuthProvider>
