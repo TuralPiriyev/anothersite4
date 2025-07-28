@@ -19,7 +19,7 @@ router.post('/', async (req, res) => {
     if (existingPortfolio) {
       console.log('❌ Portfolio with this name already exists:', req.body.name);
       return res.status(400).json({ 
-        message: 'Bu adlı bir portfolio artıq yaratmısınız' 
+        message: 'A portfolio with this name already exists' 
       });
     }
     

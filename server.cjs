@@ -119,7 +119,7 @@ app.post('/api/databases', authenticate, async (req, res) => {
     );
     
     if (databaseExists) {
-      return res.status(409).json({ error: 'Bu adlı bir database artıq yaratmısınız' });
+      return res.status(409).json({ error: 'A database with this name already exists' });
     }
     
     // Create database and save schema data
