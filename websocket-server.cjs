@@ -80,12 +80,34 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
   
   ws.schemaId = schemaId;
   ws.isAlive = true;
+  ws.connectedAt = Date.now();
   
-  // Send connection established message
+  // Send connection established message with schema info
   ws.send(JSON.stringify({
     type: 'connection_established',
-    clientId: `client_${Date.now()}`
+    clientId: `client_${Date.now()}`,
+    schemaId: schemaId,
+    timestamp: new Date().toISOString()
   }));
+  
+  // Send current users in schema
+  const schemaConnections = connections.get(schemaId);
+  if (schemaConnections) {
+    const currentUsers = Array.from(schemaConnections)
+      .filter(conn => conn.userId && conn.username)
+      .map(conn => ({
+        id: conn.userId,
+        username: conn.username,
+        role: conn.role || 'editor'
+      }));
+    
+    if (currentUsers.length > 0) {
+      ws.send(JSON.stringify({
+        type: 'current_users',
+        users: currentUsers
+      }));
+    }
+  }
   
   // Handle incoming messages
   ws.on('message', (data) => {
@@ -97,6 +119,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
         case 'user_join':
           ws.userId = message.userId;
           ws.username = message.username;
+          ws.role = message.role || 'editor';
           userSessions.set(message.userId, ws);
           
           // Broadcast user joined to others
@@ -105,11 +128,12 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
             user: {
               id: message.userId,
               username: message.username,
-              role: 'editor'
+              role: ws.role,
+              joinedAt: new Date().toISOString()
             }
           }, message.userId);
           
-          console.log(`👋 User ${message.username} joined schema ${schemaId}`);
+          console.log(`👋 User ${message.username} (${ws.role}) joined schema ${schemaId}`);
           break;
           
         case 'user_leave':
@@ -128,10 +152,16 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
               message.cursor.userId && 
               typeof message.cursor.userId === 'string') {
             
+            // Add timestamp to cursor data
+            const cursorData = {
+              ...message.cursor,
+              timestamp: new Date().toISOString()
+            };
+            
             // Broadcast cursor position to other users
             broadcastToSchema(schemaId, {
               type: 'cursor_update',
-              data: message.cursor
+              data: cursorData
             }, message.cursor.userId);
             
             console.log(`📍 Cursor update from ${message.cursor.username || message.cursor.userId} broadcasted`);
@@ -153,16 +183,28 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
           break;
           
         case 'schema_change':
+          // Validate schema change data
+          if (!message.changeType || !message.data) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Invalid schema_change format. Expected changeType and data.'
+            }));
+            break;
+          }
+          
           // Broadcast schema changes to all users
-          broadcastToSchema(schemaId, {
+          const schemaChangeMessage = {
             type: 'schema_change',
             changeType: message.changeType,
             data: message.data,
             userId: message.userId,
-            timestamp: message.timestamp
-          }, message.userId);
+            username: message.username,
+            timestamp: new Date().toISOString()
+          };
           
-          console.log(`🔄 Schema change: ${message.changeType} by ${message.userId}`);
+          broadcastToSchema(schemaId, schemaChangeMessage, message.userId);
+          
+          console.log(`🔄 Schema change: ${message.changeType} by ${message.username || message.userId}`);
           break;
           
         case 'user_selection':

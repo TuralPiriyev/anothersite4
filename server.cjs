@@ -13,6 +13,8 @@ const axios      = require('axios');
 const cron       = require('node-cron')
 const cookieParser = require('cookie-parser')
 const expressWs  = require('express-ws');
+const WebSocket = require('ws');
+
 // Load env
 dotenv.config();
 
@@ -204,7 +206,8 @@ app.post('/api/paypal/create-order', async (req, res) => {
           amount: { currency_code: 'USD', value: PLAN_PRICES[plan] },
           description: `${plan.toUpperCase()} subscription`
         }],
-        application_context: {
+        application_context:
+         {
           brand_name: 'SizinSite.com',
           return_url:  `${FRONTEND_ORIGIN}/paypal/success`,
           cancel_url:  `${FRONTEND_ORIGIN}/paypal/cancel`,
@@ -487,10 +490,56 @@ app.post('/api/users/validate', async (req, res) => {
 app.post('/api/invitations', authenticate, async (req, res) => {
   try {
     console.log('Creating invitation:', req.body);
-    const inv = new Invitation(req.body);
+    
+    // Validate required fields
+    const { workspaceId, inviterUsername, inviteeUsername, role, joinCode } = req.body;
+    
+    if (!workspaceId || !inviterUsername || !inviteeUsername || !role || !joinCode) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: workspaceId, inviterUsername, inviteeUsername, role, joinCode' 
+      });
+    }
+    
+    // Check if invitation already exists
+    const existingInvitation = await Invitation.findOne({
+      workspaceId,
+      inviteeUsername,
+      status: 'pending'
+    });
+    
+    if (existingInvitation) {
+      return res.status(400).json({ 
+        error: 'User already has a pending invitation for this workspace' 
+      });
+    }
+    
+    // Create new invitation
+    const invitationData = {
+      workspaceId,
+      inviterUsername,
+      inviteeUsername,
+      role,
+      joinCode: joinCode.toUpperCase(),
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      status: 'pending'
+    };
+    
+    const inv = new Invitation(invitationData);
     await inv.save();
+    
     console.log('Invitation saved successfully:', inv._id);
-    res.status(201).json(inv);
+    res.status(201).json({
+      id: inv._id,
+      workspaceId: inv.workspaceId,
+      inviterUsername: inv.inviterUsername,
+      inviteeUsername: inv.inviteeUsername,
+      role: inv.role,
+      joinCode: inv.joinCode,
+      createdAt: inv.createdAt,
+      expiresAt: inv.expiresAt,
+      status: inv.status
+    });
   } catch (err) {
     console.error('Error saving invitation:', err);
     res.status(500).json({ error: 'Failed to save invitation' });
@@ -528,12 +577,14 @@ app.post('/api/invitations/validate', authenticate, async (req, res) => {
       });
     }
     
+    // Find invitation by join code (case insensitive)
     const invitation = await Invitation.findOne({ 
-      joinCode: joinCode.toUpperCase(),
+      joinCode: { $regex: new RegExp(`^${joinCode.toUpperCase()}$`, 'i') },
       status: 'pending'
     });
     
     if (!invitation) {
+      console.log('No invitation found for code:', joinCode);
       return res.json({ 
         valid: false, 
         error: 'Invalid join code' 
@@ -544,6 +595,7 @@ app.post('/api/invitations/validate', authenticate, async (req, res) => {
     if (new Date() > invitation.expiresAt) {
       // Update status to expired
       await Invitation.findByIdAndUpdate(invitation._id, { status: 'expired' });
+      console.log('Invitation expired:', invitation._id);
       return res.json({ 
         valid: false, 
         error: 'Join code has expired' 
@@ -553,7 +605,17 @@ app.post('/api/invitations/validate', authenticate, async (req, res) => {
     console.log('Valid invitation found:', invitation._id);
     res.json({ 
       valid: true, 
-      invitation 
+      invitation: {
+        id: invitation._id,
+        workspaceId: invitation.workspaceId,
+        inviterUsername: invitation.inviterUsername,
+        inviteeUsername: invitation.inviteeUsername,
+        role: invitation.role,
+        joinCode: invitation.joinCode,
+        createdAt: invitation.createdAt,
+        expiresAt: invitation.expiresAt,
+        status: invitation.status
+      }
     });
   } catch (err) {
     console.error('Error validating join code:', err);
@@ -599,10 +661,49 @@ app.put('/api/invitations/:id', authenticate, async (req, res) => {
 app.post('/api/members', authenticate, async (req, res) => {
   try {
     console.log('Creating workspace member:', req.body);
-    const m = new Member(req.body);
+    
+    // Validate required fields
+    const { workspaceId, id, username, role } = req.body;
+    
+    if (!workspaceId || !id || !username || !role) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: workspaceId, id, username, role' 
+      });
+    }
+    
+    // Check if member already exists
+    const existingMember = await Member.findOne({
+      workspaceId,
+      username
+    });
+    
+    if (existingMember) {
+      return res.status(400).json({ 
+        error: 'User is already a member of this workspace' 
+      });
+    }
+    
+    // Create new member
+    const memberData = {
+      workspaceId,
+      id,
+      username,
+      role,
+      joinedAt: new Date()
+    };
+    
+    const m = new Member(memberData);
     await m.save();
+    
     console.log('Member saved successfully:', m._id);
-    res.status(201).json(m);
+    res.status(201).json({
+      id: m._id,
+      workspaceId: m.workspaceId,
+      memberId: m.id,
+      username: m.username,
+      role: m.role,
+      joinedAt: m.joinedAt
+    });
   } catch (err) {
     console.error('Error saving member:', err);
     res.status(500).json({ error: 'Failed to save member' });
@@ -824,6 +925,61 @@ app.post('/api/paypal/capture-order', async (req, res) => {
   } else {
     return res.status(500).json({ success: false, error: 'Capture failed' });
   }
+});
+
+const wss = new WebSocket.Server({ port: 8080 });
+const workspaces = {}; // Workspace-lərin vəziyyətini və istifadəçiləri saxlamaq üçün obyekt
+
+wss.on('connection', (ws) => {
+  ws.on('message', (message) => {
+    const { type, workspaceId, payload } = JSON.parse(message);
+
+    if (!workspaces[workspaceId]) {
+      workspaces[workspaceId] = { clients: new Set(), document: '', cursors: {} };
+    }
+
+    const workspace = workspaces[workspaceId];
+
+    switch (type) {
+      case 'join':
+        workspace.clients.add(ws);
+        ws.send(
+          JSON.stringify({
+            type: 'init',
+            payload: { document: workspace.document, cursors: workspace.cursors },
+          })
+        );
+        break;
+
+      case 'leave':
+        workspace.clients.delete(ws);
+        break;
+
+      case 'text-change':
+        workspace.document = payload.text;
+        workspace.clients.forEach((client) => {
+          if (client !== ws) {
+            client.send(JSON.stringify({ type: 'text-change', payload }));
+          }
+        });
+        break;
+
+      case 'cursor-update':
+        workspace.cursors[payload.userId] = payload.position;
+        workspace.clients.forEach((client) => {
+          if (client !== ws) {
+            client.send(JSON.stringify({ type: 'cursor-update', payload }));
+          }
+        });
+        break;
+    }
+  });
+
+  ws.on('close', () => {
+    Object.values(workspaces).forEach((workspace) => {
+      workspace.clients.delete(ws);
+    });
+  });
 });
 
 app.ws('/ws/collaboration/:schemaId', (ws, req) => {
