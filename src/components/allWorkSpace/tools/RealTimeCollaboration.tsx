@@ -9,15 +9,16 @@ import { collaborationService, CollaborationUser } from '../../../services/colla
 import { mongoService } from '../../../services/mongoService';
 import api from '../../../utils/api';
 
- const getRoleBadgeColor = (role: CollaboratorPresence['role']): string => {
+const getRoleBadgeColor = (role: CollaboratorPresence['role']): string => {
   switch (role) {
-
+    case 'owner': return 'bg-purple-100 text-purple-800';
     case 'admin':  return 'bg-purple-100 text-purple-800';
     case 'editor': return 'bg-blue-100   text-blue-800';
     case 'viewer': return 'bg-gray-100   text-gray-800';
     default:       return 'bg-gray-100   text-gray-800';
   }
 };
+
 interface CollaboratorCursor {
   userId: string;
   username: string;
@@ -35,6 +36,7 @@ interface CollaborationStatus {
   lastSync: string;
   activeUsers: number;
 }
+
 interface CollaboratorPresence {
   userId: string;
   username: string;
@@ -43,6 +45,8 @@ interface CollaboratorPresence {
   currentAction?: string;
   joinedAt: Date;
   avatar?: string;
+  color: string;
+  isOnline: boolean;
 }
 
 interface RealtimeEvent {
@@ -67,11 +71,11 @@ const RealTimeCollaboration: React.FC = () => {
     removeTable
   } = useDatabase();
   
-const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStatus>({
-  isConnected: false,
-  lastSync: new Date().toISOString(),
-  activeUsers: 0
-});
+  const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStatus>({
+    isConnected: false,
+    lastSync: new Date().toISOString(),
+    activeUsers: 0
+  });
 
   const [isConnected, setIsConnected] = useState(false);
   const [collaborators, setCollaborators] = useState<CollaboratorPresence[]>([]);
@@ -98,188 +102,148 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
   const [activeTab, setActiveTab] = useState<'invite' | 'accept' | 'members'>('invite');
   
   // State for copied code feedback
-  const [copiedCode, setCopiedCode] = useState('');
-  
-  // Monitor collaboration service status (don't create new connection)
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  // Initialize collaboration when component mounts
   useEffect(() => {
-    if (currentPlan !== 'ultimate' || !currentSchema?.id) {
-      setIsConnected(false);
-      // Dispatch disconnection event to MainLayout
-      window.dispatchEvent(new CustomEvent('collaboration-event', {
-        detail: { type: 'connection_status', data: { connected: false } }
-      }));
-      return;
+    if (currentSchema && currentSchema.id) {
+      initializeCollaboration();
     }
 
-    // Initialize collaboration service for this component
-    const initializeCollaboration = async () => {
-      try {
-        // Create a demo user for collaboration
-        const demoUser: CollaborationUser = {
-          id: `user_${Date.now()}`,
-          username: `user_${Math.random().toString(36).substr(2, 8)}`,
-          role: 'editor',
-          color: `hsl(${Math.random() * 360}, 70%, 50%)`
-        };
-
-        // Initialize and connect collaboration service
-        collaborationService.initialize(demoUser, currentSchema.id);
-
-        // Set up event handlers for this component's state
-        const handleConnected = () => {
-          setIsConnected(true);
-          setConnectionQuality('excellent');
-          setCollaborationStatus(prev => ({
-            ...prev,
-            isConnected: true,
-            lastSync: new Date().toISOString()
-          }));
-          
-          // Dispatch connection event to MainLayout
-          window.dispatchEvent(new CustomEvent('collaboration-event', {
-            detail: { type: 'connection_status', data: { connected: true } }
-          }));
-        };
-
-        const handleDisconnected = () => {
-          setIsConnected(false);
-          setCollaborationStatus(prev => ({ ...prev, isConnected: false }));
-          
-          // Dispatch disconnection event to MainLayout
-          window.dispatchEvent(new CustomEvent('collaboration-event', {
-            detail: { type: 'connection_status', data: { connected: false } }
-          }));
-        };
-
-        const handleUserJoined = (user: CollaborationUser) => {
-          console.log('👋 User joined collaboration:', user.username);
-          addRealtimeEvent('user_joined', user.id, user.username, user);
-          
-          setCollaborators(prev => {
-            const exists = prev.find(c => c.userId === user.id);
-            if (!exists) {
-              return [...prev, {
-                userId: user.id,
-                username: user.username,
-                role: user.role as any,
-                status: 'online' as const,
-                currentAction: 'Working on schema',
-                joinedAt: new Date()
-              }];
-            }
-            return prev;
-          });
-        };
-
-        const handleUserLeft = (userId: string) => {
-          console.log('👋 User left collaboration:', userId);
-          setCollaborators(prev => prev.filter(c => c.userId !== userId));
-          setCursors(prev => prev.filter(c => c.userId !== userId));
-          addRealtimeEvent('user_left', userId, 'User', {});
-          
-          // Dispatch user left event to MainLayout
-          window.dispatchEvent(new CustomEvent('collaboration-event', {
-            detail: { type: 'user_left', data: { userId } }
-          }));
-        };
-
-        const handleCursorUpdate = (cursor: any) => {
-          if (cursor && 
-              typeof cursor === 'object' && 
-              cursor.userId && 
-              typeof cursor.userId === 'string') {
-            setCursors(prev => {
-              const existing = prev.findIndex(c => c.userId === cursor.userId);
-              const cursorData = {
-                userId: cursor.userId,
-                username: cursor.username || 'Unknown',
-                position: cursor.position || { x: 0, y: 0 },
-                selection: cursor.selection,
-                color: cursor.color || '#3B82F6',
-                lastSeen: new Date(cursor.lastSeen || Date.now())
-              };
-
-              if (existing >= 0) {
-                const updated = [...prev];
-                updated[existing] = cursorData;
-                return updated;
-              }
-              return [...prev, cursorData];
-            });
-            
-            // Dispatch cursor update event to MainLayout
-            window.dispatchEvent(new CustomEvent('collaboration-event', {
-              detail: { type: 'cursor_update', data: cursor }
-            }));
-          } else {
-            console.warn('⚠️ Invalid cursor data in RealTimeCollaboration:', cursor);
-          }
-        };
-
-        const handleSchemaChange = (message: any) => {
-          console.log('🔄 Schema change received:', message);
-          handleSchemaChangeEvent(message);
-          addRealtimeEvent(message.changeType, message.userId, message.username || 'User', message.data);
-        };
-
-        const handleError = (error: any) => {
-          console.error('❌ Collaboration error:', error);
-          setConnectionQuality('poor');
-        };
-
-        // Register event handlers
-        collaborationService.on('connected', handleConnected);
-        collaborationService.on('disconnected', handleDisconnected);
-        collaborationService.on('user_joined', handleUserJoined);
-        collaborationService.on('user_left', handleUserLeft);
-        collaborationService.on('cursor_update', handleCursorUpdate);
-        collaborationService.on('schema_change', handleSchemaChange);
-        collaborationService.on('error', handleError);
-
-        // Connect to collaboration service
-        await collaborationService.connect();
-
-        // Cleanup
-        return () => {
-          collaborationService.off('connected', handleConnected);
-          collaborationService.off('disconnected', handleDisconnected);
-          collaborationService.off('user_joined', handleUserJoined);
-          collaborationService.off('user_left', handleUserLeft);
-          collaborationService.off('cursor_update', handleCursorUpdate);
-          collaborationService.off('schema_change', handleSchemaChange);
-          collaborationService.off('error', handleError);
-          collaborationService.disconnect();
-        };
-
-      } catch (error) {
-        console.error('Failed to initialize collaboration:', error);
-        setIsConnected(false);
-        setConnectionQuality('poor');
-        
-        // Dispatch error connection event to MainLayout
-        window.dispatchEvent(new CustomEvent('collaboration-event', {
-          detail: { type: 'connection_status', data: { connected: false } }
-        }));
-      }
-    };
-
-    // Small delay to prevent connection spam
-    const timeoutId = setTimeout(initializeCollaboration, 500);
-
     return () => {
-      clearTimeout(timeoutId);
+      // Cleanup on unmount
+      collaborationService.disconnect();
     };
-  }, [currentPlan, currentSchema?.id]);
+  }, [currentSchema?.id]);
 
-  // Listen for cursor move events from MainLayout
+  const initializeCollaboration = async () => {
+    if (!currentSchema?.id) return;
+
+    try {
+      // Create a mock user for now - in real app, get from auth context
+      const currentUser: CollaborationUser = {
+        id: 'user_' + Date.now(),
+        username: 'current_user',
+        role: 'editor',
+        color: '#3B82F6'
+      };
+
+      // Initialize collaboration service
+      collaborationService.initialize(currentUser, currentSchema.id);
+
+      // Set up event handlers
+      const handleConnected = () => {
+        console.log('✅ Collaboration connected');
+        setIsConnected(true);
+        setCollaborationStatus(prev => ({
+          ...prev,
+          isConnected: true,
+          lastSync: new Date().toISOString()
+        }));
+      };
+
+      const handleDisconnected = () => {
+        console.log('❌ Collaboration disconnected');
+        setIsConnected(false);
+        setCollaborationStatus(prev => ({
+          ...prev,
+          isConnected: false
+        }));
+      };
+
+      const handleUserJoined = (user: CollaborationUser) => {
+        console.log('👋 User joined:', user);
+        setCollaborators(prev => {
+          const existing = prev.find(c => c.userId === user.id);
+          if (existing) {
+            return prev.map(c => c.userId === user.id ? { ...c, isOnline: true } : c);
+          }
+          return [...prev, {
+            userId: user.id,
+            username: user.username,
+            role: user.role,
+            status: 'online',
+            joinedAt: new Date(),
+            color: user.color,
+            isOnline: true
+          }];
+        });
+        setCollaborationStatus(prev => ({
+          ...prev,
+          activeUsers: prev.activeUsers + 1
+        }));
+      };
+
+      const handleUserLeft = (userId: string) => {
+        console.log('👋 User left:', userId);
+        setCollaborators(prev => prev.map(c => 
+          c.userId === userId ? { ...c, isOnline: false, status: 'offline' } : c
+        ));
+        setCollaborationStatus(prev => ({
+          ...prev,
+          activeUsers: Math.max(0, prev.activeUsers - 1)
+        }));
+      };
+
+      const handleCursorUpdate = (cursor: any) => {
+        if (!cursor || !cursor.userId) return;
+        
+        setCursors(prev => {
+          const existing = prev.find(c => c.userId === cursor.userId);
+          if (existing) {
+            return prev.map(c => c.userId === cursor.userId ? { ...c, ...cursor, lastSeen: new Date() } : c);
+          }
+          return [...prev, { ...cursor, lastSeen: new Date() }];
+        });
+      };
+
+      const handleSchemaChange = (message: any) => {
+        console.log('🔄 Schema change received:', message);
+        // Handle schema changes from other users
+        if (message.data && message.userId !== 'current_user') {
+          // Apply changes to local schema
+          handleSchemaChangeEvent(message);
+        }
+      };
+
+      const handleError = (error: any) => {
+        console.error('❌ Collaboration error:', error);
+      };
+
+      // Register event handlers
+      collaborationService.on('connected', handleConnected);
+      collaborationService.on('disconnected', handleDisconnected);
+      collaborationService.on('user_joined', handleUserJoined);
+      collaborationService.on('user_left', handleUserLeft);
+      collaborationService.on('cursor_update', handleCursorUpdate);
+      collaborationService.on('schema_change', handleSchemaChange);
+      collaborationService.on('error', handleError);
+
+      // Connect to WebSocket
+      await collaborationService.connect();
+
+    } catch (error) {
+      console.error('❌ Failed to initialize collaboration:', error);
+    }
+  };
+
+  // Handle cursor movement
   useEffect(() => {
     const handleCursorMove = (event: CustomEvent) => {
-      const { position } = event.detail;
-      if (position && isConnected && collaborationService.isConnectedState()) {
-        collaborationService.sendCursorUpdate(position);
-      }
+      if (!isConnected || !collaborationService.isConnectedState()) return;
+      
+      const { x, y, selection } = event.detail;
+      
+      // Broadcast cursor position to other users
+      collaborationService.sendCursorUpdate({
+        x,
+        y,
+        tableId: selection?.tableId,
+        columnId: selection?.columnId
+      });
     };
 
+    // Listen for cursor move events
     window.addEventListener('cursor-move', handleCursorMove as EventListener);
 
     return () => {
@@ -425,281 +389,190 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     try {
       await navigator.clipboard.writeText(code);
       setCopiedCode(code);
-      setTimeout(() => setCopiedCode(''), 2000);
+      setTimeout(() => setCopiedCode(null), 2000);
     } catch (error) {
       console.error('Failed to copy code:', error);
     }
   };
 
-  // Enhanced member removal with real database sync
   const removeMember = async (memberId: string) => {
-    const member = currentSchema.members.find(m => m.id === memberId);
-    if (!member) return;
-
-    if (confirm(`Are you sure you want to remove ${member.username} from the workspace?`)) {
-      removeWorkspaceMember(memberId);
-      
-      // Update real database
-      try {
-        await api.delete(`/api/members/${memberId}`);
-        await syncWorkspaceWithMongoDB();
-      } catch (error) {
-        console.error('Failed to update database:', error);
-      }
+    try {
+      await removeWorkspaceMember(memberId);
+      console.log('Member removed successfully');
+    } catch (error) {
+      console.error('Failed to remove member:', error);
     }
   };
 
   const handleSchemaChangeEvent = (message: any) => {
-    const { changeType, data } = message;
+    console.log('🔄 Handling schema change event:', message);
     
-    switch (changeType) {
+    // Apply changes based on the change type
+    switch (message.changeType) {
       case 'table_created':
-        if (data.table) {
-          addTable(data.table);
+        if (message.data && message.userId !== 'current_user') {
+          addTable(message.data);
         }
         break;
       case 'table_updated':
-        if (data.tableId && data.updates) {
-          updateTable(data.tableId, data.updates);
+        if (message.data && message.userId !== 'current_user') {
+          updateTable(message.data.id, message.data);
         }
         break;
       case 'table_deleted':
-        if (data.tableId) {
-          removeTable(data.tableId);
+        if (message.data && message.userId !== 'current_user') {
+          removeTable(message.data.id);
         }
         break;
-      case 'relationship_added':
-        // Handle relationship changes
-        break;
+      default:
+        console.log('Unknown schema change type:', message.changeType);
     }
-    
-    // Sync with MongoDB
-    syncWorkspaceWithMongoDB();
   };
 
   const addRealtimeEvent = (type: RealtimeEvent['type'], userId: string, username: string, data: any) => {
     const event: RealtimeEvent = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type,
       userId,
       username,
-      timestamp:  new Date().toISOString(),
+      timestamp: new Date().toISOString(),
       data
     };
     
-    setRealtimeEvents(prev => [event, ...prev.slice(0, 49)]); // Keep last 50 events
+    setRealtimeEvents(prev => [event, ...prev.slice(0, 9)]); // Keep last 10 events
   };
 
   const broadcastCursorPosition = (x: number, y: number, selection?: any) => {
-    if (isConnected && collaborationService.isConnectedState()) {
-      collaborationService.sendCursorUpdate({
-        x,
-        y,
-        tableId: selection?.tableId,
-        columnId: selection?.columnId
-      });
-    }
+    if (!isConnected || !collaborationService.isConnectedState()) return;
+    
+    collaborationService.sendCursorUpdate({
+      x,
+      y,
+      tableId: selection?.tableId,
+      columnId: selection?.columnId
+    });
   };
-  
+
   const broadcastSchemaChange = (changeType: string, data: any) => {
-    if (isConnected && collaborationService.isConnectedState()) {
-      collaborationService.sendSchemaChange({
-        type: changeType as any,
-        data,
-        userId: 'current_user',
-        timestamp: new Date()
-      });
-    }
+    if (!isConnected || !collaborationService.isConnectedState()) return;
+    
+    collaborationService.sendSchemaChange({
+      type: changeType as any,
+      data,
+      userId: 'current_user',
+      timestamp: new Date()
+    });
   };
-
- 
-
-  // Real-time workspace synchronization
-  useEffect(() => {
-    if (currentPlan === 'ultimate' && currentSchema.isShared) {
-      const syncInterval = setInterval(async () => {
-        try {
-          // Fetch latest workspace data from MongoDB
-          const workspaceMembers = await mongoService.getWorkspaceMembers(currentSchema.id);
-          const workspaceInvitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
-          
-          // Update local state with fresh data
-          setCollaborators(workspaceMembers.map(member => ({
-            userId: member.id,
-            username: member.username,
-            role: member.role as 'admin' | 'editor' | 'viewer',
-            status: 'online' as const,
-            currentAction: 'Working on schema',
-            joinedAt: member.joinedAt
-          })));
-          
-         setCollaborationStatus(prev => ({
-  ...prev,
-  isConnected: true,
-  lastSync: new Date().toISOString(),
-  activeUsers: workspaceMembers.length
-}));
-        } catch (error) {
-          console.error('Failed to sync workspace:', error);
-          setCollaborationStatus(prev => ({
-            ...prev,
-            isConnected: false
-          }));
-        }
-      }, 10000); // Sync every 10 seconds
-
-      return () => clearInterval(syncInterval);
-    }
-  }, [currentPlan, currentSchema.isShared, currentSchema.id]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'online': return 'bg-green-500';
-      case 'away': return 'bg-yellow-500';
-      case 'offline': return 'bg-gray-500';
-      default: return 'bg-gray-500';
+      case 'online': return 'text-green-600';
+      case 'away': return 'text-yellow-600';
+      case 'offline': return 'text-gray-600';
+      default: return 'text-gray-600';
     }
   };
 
   const getRoleIcon = (role: string) => {
     switch (role) {
-      case 'admin': return <Crown className="w-4 h-4 text-purple-500" />;
-      case 'editor': return <Edit className="w-4 h-4 text-blue-500" />;
-      case 'viewer': return <Eye className="w-4 h-4 text-gray-500" />;
-      default: return <Users className="w-4 h-4 text-gray-500" />;
+      case 'owner': return <Crown className="w-4 h-4" />;
+      case 'admin': return <Shield className="w-4 h-4" />;
+      case 'editor': return <Edit className="w-4 h-4" />;
+      case 'viewer': return <Eye className="w-4 h-4" />;
+      default: return <Users className="w-4 h-4" />;
     }
   };
 
   const getEventIcon = (type: string) => {
     switch (type) {
-      case 'table_created': return '🆕';
-      case 'table_updated': return '✏️';
-      case 'table_deleted': return '🗑️';
-      case 'relationship_added': return '🔗';
-      case 'user_joined': return '👋';
-      case 'user_left': return '👋';
-      default: return '📝';
+      case 'table_created': return <Activity className="w-4 h-4" />;
+      case 'table_updated': return <Edit className="w-4 h-4" />;
+      case 'table_deleted': return <X className="w-4 h-4" />;
+      case 'user_joined': return <UserPlus className="w-4 h-4" />;
+      case 'user_left': return <Users className="w-4 h-4" />;
+      default: return <Activity className="w-4 h-4" />;
     }
   };
 
   const formatEventMessage = (event: RealtimeEvent) => {
     switch (event.type) {
       case 'table_created':
-        return `created table "${event.data.tableName}"`;
+        return `${event.username} created a new table`;
       case 'table_updated':
-        return `updated table "${event.data.tableName}"`;
+        return `${event.username} updated a table`;
       case 'table_deleted':
-        return `deleted table "${event.data.tableName}"`;
-      case 'relationship_added':
-        return `added relationship ${event.data.source} → ${event.data.target}`;
+        return `${event.username} deleted a table`;
       case 'user_joined':
-        return 'joined the workspace';
+        return `${event.username} joined the workspace`;
       case 'user_left':
-        return 'left the workspace';
+        return `${event.username} left the workspace`;
       default:
-        return 'performed an action';
+        return `${event.username} performed an action`;
     }
   };
 
-  // Only show for Ultimate plan users
-  if (currentPlan !== 'ultimate') {
-    return (
-      <div className="h-full flex flex-col items-center justify-center p-8">
-        <div className="text-center max-w-md">
-          <div className="w-20 h-20 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/20 dark:to-pink-900/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Users className="w-10 h-10 text-purple-600 dark:text-purple-400" />
+  return (
+    <div className="space-y-6">
+      {/* Connection Status */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/10 dark:to-indigo-900/10 border border-blue-200 dark:border-blue-800 rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <div>
+              <p className="font-medium text-gray-900 dark:text-white">
+                {isConnected ? 'Connected' : 'Disconnected'}
+              </p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {collaborationStatus.activeUsers} active users
+              </p>
+            </div>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-3">
-            Real-Time Collaboration
-          </h3>
-          <p className="text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">
-            Live cursors, presence indicators, and real-time schema synchronization. Available exclusively in the Ultimate plan.
-          </p>
-          <button className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl font-medium transition-all duration-200 hover:scale-105 shadow-lg">
-            Upgrade to Ultimate
-          </button>
+          <div className="flex items-center gap-2">
+            <Wifi className={`w-4 h-4 ${isConnected ? 'text-green-600' : 'text-red-600'}`} />
+            <span className={`text-sm font-medium ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
+              {isConnected ? 'Real-time' : 'Offline'}
+            </span>
+          </div>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="h-full flex flex-col p-4">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Real-Time Collaboration
-          </h3>
-          <div className="flex items-center gap-3">
-            {/* Connection Status */}
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${
-              isConnected 
-                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-            }`}>
-              {isConnected ? (
-                <Wifi className="w-4 h-4" />
-              ) : (
-                <WifiOff className="w-4 h-4" />
-              )}
-              <span className="text-sm font-medium">
-                {isConnected ? 'Connected' : 'Disconnected'}
-              </span>
-            </div>
-            
-            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <Users className="w-4 h-4" />
-              <span>{collaborators.length} active</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Connection Quality */}
-        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-          <Activity className="w-4 h-4" />
-          <span>Connection quality: </span>
-          <span className={`font-medium ${
-            connectionQuality === 'excellent' ? 'text-green-600' :
-            connectionQuality === 'good' ? 'text-yellow-600' : 'text-red-600'
-          }`}>
-            {connectionQuality}
-          </span>
-        </div>
-
-        {/* Enhanced Tabs */}
-        <div className="border-b border-gray-200 dark:border-gray-700 mt-6">
-          <nav className="flex space-x-8">
-            {[
-              { id: 'invite', name: 'Send Invitation', icon: UserPlus, color: 'text-blue-600 dark:text-blue-400' },
-              { id: 'accept', name: 'Accept Invitation', icon: Send, color: 'text-green-600 dark:text-green-400' },
-              { id: 'members', name: 'Team Members', icon: Users, color: 'text-purple-600 dark:text-purple-400' }
-            ].map(tab => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`
-                    flex items-center gap-2 py-3 px-1 border-b-2 font-medium text-sm transition-all duration-200
-                    ${activeTab === tab.id
-                      ? `border-purple-500 ${tab.color} bg-purple-50 dark:bg-purple-900/10 px-3 rounded-t-lg`
-                      : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 px-3 rounded-t-lg'
-                    }
-                  `}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.name}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
+      {/* Tab Navigation */}
+      <div className="flex space-x-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+        <button
+          onClick={() => setActiveTab('invite')}
+          className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+            activeTab === 'invite'
+              ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+          }`}
+        >
+          Invite Users
+        </button>
+        <button
+          onClick={() => setActiveTab('accept')}
+          className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+            activeTab === 'accept'
+              ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+          }`}
+        >
+          Join Workspace
+        </button>
+        <button
+          onClick={() => setActiveTab('members')}
+          className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+            activeTab === 'members'
+              ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+          }`}
+        >
+          Team Members
+        </button>
       </div>
 
       {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto">
-        {/* Send Invitation Tab */}
+      <div className="space-y-6">
+        {/* Invite Users Tab */}
         {activeTab === 'invite' && (
           <div className="space-y-6">
             <div className="bg-gradient-to-br from-white to-blue-50 dark:from-gray-800 dark:to-blue-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
@@ -708,7 +581,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                   <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 </div>
                 <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  Invite New Team Member
+                  Invite Team Members
                 </h4>
               </div>
               
@@ -718,76 +591,63 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Username
                   </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={inviteUsername}
-                      onChange={(e) => setInviteUsername(e.target.value)}
-                      className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
-                      placeholder="Enter username to invite"
-                      disabled={isInviting}
-                    />
-                    {isInviting && (
-                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                        <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-                      </div>
-                    )}
-                  </div>
+                  <input
+                    type="text"
+                    value={inviteUsername}
+                    onChange={(e) => setInviteUsername(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                    placeholder="Enter username to invite"
+                    disabled={isInviting}
+                  />
                 </div>
 
                 {/* Role Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Role & Permissions
+                    Role
                   </label>
-                  <div className="grid grid-cols-1 gap-3">
-                    {[
-                      { value: 'editor', label: 'Editor', desc: 'Can modify tables, data, and workspace settings', icon: '✏️' },
-                      { value: 'viewer', label: 'Viewer', desc: 'Can only view the workspace, no editing permissions', icon: '👁️' }
-                    ].map(role => (
-                      <label key={role.value} className="relative">
-                        <input
-                          type="radio"
-                          name="role"
-                          value={role.value}
-                          checked={inviteRole === role.value}
-                          onChange={(e) => setInviteRole(e.target.value as 'editor' | 'viewer')}
-                          className="sr-only"
-                          disabled={isInviting}
-                        />
-                        <div className={`
-                          p-4 border-2 rounded-xl cursor-pointer transition-all duration-200
-                          ${inviteRole === role.value
-                            ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                          }
-                        `}>
-                          <div className="flex items-start gap-3">
-                            <span className="text-lg">{role.icon}</span>
-                            <div className="flex-1">
-                              <div className="font-medium text-gray-900 dark:text-white">{role.label}</div>
-                              <div className="text-sm text-gray-500 dark:text-gray-400">{role.desc}</div>
-                            </div>
-                            {inviteRole === role.value && (
-                              <Check className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                            )}
-                          </div>
-                        </div>
-                      </label>
-                    ))}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setInviteRole('editor')}
+                      className={`p-3 rounded-xl border-2 transition-all duration-200 ${
+                        inviteRole === 'editor'
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                          : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-blue-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Edit className="w-4 h-4" />
+                        <span className="font-medium">Editor</span>
+                      </div>
+                      <p className="text-xs mt-1 opacity-75">Can edit and modify</p>
+                    </button>
+                    <button
+                      onClick={() => setInviteRole('viewer')}
+                      className={`p-3 rounded-xl border-2 transition-all duration-200 ${
+                        inviteRole === 'viewer'
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                          : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-blue-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Eye className="w-4 h-4" />
+                        <span className="font-medium">Viewer</span>
+                      </div>
+                      <p className="text-xs mt-1 opacity-75">Can view only</p>
+                    </button>
                   </div>
                 </div>
 
-                {/* Send Button */}
+                {/* Send Invitation Button */}
                 <button
                   onClick={handleSendInvitation}
                   disabled={isInviting || !inviteUsername.trim()}
-                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:shadow-none hover:scale-[1.02] disabled:scale-100"
+                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:shadow-none hover:scale-[1.02] disabled:scale-100"
                 >
                   {isInviting ? (
                     <>
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Validating User...
+                      Sending Invitation...
                     </>
                   ) : (
                     <>
@@ -937,17 +797,22 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                     <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                   </div>
                   <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    Team Members ({currentSchema.members.length})
+                    Team Members ({collaborators.length})
                   </h4>
                 </div>
               </div>
               
               <div className="space-y-3">
-                {currentSchema.members.map(member => (
-                  <div key={member.id} className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all duration-200">
+                {collaborators.map(member => (
+                  <div key={member.userId} className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all duration-200">
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/20 dark:to-pink-900/20 rounded-full flex items-center justify-center">
-                        <Users className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                      <div 
+                        className="w-12 h-12 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: member.color + '20' }}
+                      >
+                        <span className="text-lg font-bold" style={{ color: member.color }}>
+                          {member.username.charAt(0).toUpperCase()}
+                        </span>
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
@@ -959,6 +824,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                               You
                             </span>
                           )}
+                          <div className={`w-2 h-2 rounded-full ${member.isOnline ? 'bg-green-500' : 'bg-gray-400'}`} />
                         </div>
                         <p className="text-sm text-gray-500 dark:text-gray-400">
                           Joined {member.joinedAt.toLocaleDateString()}
@@ -972,7 +838,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                       </span>
                       {member.role !== 'owner' && member.username !== 'current_user' && (
                         <button
-                          onClick={() => removeMember(member.id)}
+                          onClick={() => removeMember(member.userId)}
                           className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200"
                           title="Remove member"
                         >
@@ -982,6 +848,14 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                     </div>
                   </div>
                 ))}
+                
+                {collaborators.length === 0 && (
+                  <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                    <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No team members yet</p>
+                    <p className="text-sm">Invite users to start collaborating</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

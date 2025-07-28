@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import initSqlJs from 'sql.js';
 import { v4 as uuidv4 } from 'uuid';
 import {mongoService} from '../services/mongoService'
+import { collaborationService } from '../services/collaborationService';
 
 export interface Column {
   id: string;
@@ -490,6 +491,131 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       return () => clearInterval(syncInterval);
     }
   }, [currentSchema.isShared, syncWorkspaceWithMongoDB]);
+
+  // Real-time collaboration integration
+  useEffect(() => {
+    if (currentSchema && currentSchema.id && collaborationService) {
+      // Initialize collaboration for current schema
+      const currentUser = {
+        id: 'user_' + Date.now(),
+        username: 'current_user',
+        role: 'editor' as const,
+        color: '#3B82F6'
+      };
+
+      collaborationService.initialize(currentUser, currentSchema.id);
+      collaborationService.connect();
+
+      // Set up event handlers for real-time collaboration
+      const handleSchemaChange = (message: any) => {
+        console.log('🔄 Real-time schema change received:', message);
+        
+        if (message.userId !== 'current_user') {
+          // Apply changes from other users
+          switch (message.changeType) {
+            case 'table_created':
+              if (message.data) {
+                addTable(message.data);
+              }
+              break;
+            case 'table_updated':
+              if (message.data && message.data.id) {
+                updateTable(message.data.id, message.data);
+              }
+              break;
+            case 'table_deleted':
+              if (message.data && message.data.id) {
+                removeTable(message.data.id);
+              }
+              break;
+            case 'relationship_added':
+              // Handle relationship changes
+              break;
+            case 'relationship_removed':
+              // Handle relationship removal
+              break;
+          }
+        }
+      };
+
+      const handleUserJoined = (user: any) => {
+        console.log('👋 User joined workspace:', user);
+        // Update UI to show new user
+      };
+
+      const handleUserLeft = (userId: string) => {
+        console.log('👋 User left workspace:', userId);
+        // Update UI to remove user
+      };
+
+      const handleCursorUpdate = (cursor: any) => {
+        console.log('📍 Cursor update received:', cursor);
+        // Update cursor position in UI
+      };
+
+      // Register event handlers
+      collaborationService.on('schema_change', handleSchemaChange);
+      collaborationService.on('user_joined', handleUserJoined);
+      collaborationService.on('user_left', handleUserLeft);
+      collaborationService.on('cursor_update', handleCursorUpdate);
+
+      // Cleanup on unmount
+      return () => {
+        collaborationService.off('schema_change', handleSchemaChange);
+        collaborationService.off('user_joined', handleUserJoined);
+        collaborationService.off('user_left', handleUserLeft);
+        collaborationService.off('cursor_update', handleCursorUpdate);
+        collaborationService.disconnect();
+      };
+    }
+  }, [currentSchema?.id]);
+
+  // Enhanced table operations with real-time broadcasting
+  const addTableWithCollaboration = async (table: Table) => {
+    const newTable = await addTable(table);
+    
+    // Broadcast to other users
+    if (collaborationService && collaborationService.isConnectedState()) {
+      collaborationService.sendSchemaChange({
+        type: 'table_created',
+        data: newTable,
+        userId: 'current_user',
+        timestamp: new Date()
+      });
+    }
+    
+    return newTable;
+  };
+
+  const updateTableWithCollaboration = async (tableId: string, updates: Partial<Table>) => {
+    const updatedTable = await updateTable(tableId, updates);
+    
+    // Broadcast to other users
+    if (collaborationService && collaborationService.isConnectedState()) {
+      collaborationService.sendSchemaChange({
+        type: 'table_updated',
+        data: { id: tableId, ...updates },
+        userId: 'current_user',
+        timestamp: new Date()
+      });
+    }
+    
+    return updatedTable;
+  };
+
+  const removeTableWithCollaboration = async (tableId: string) => {
+    await removeTable(tableId);
+    
+    // Broadcast to other users
+    if (collaborationService && collaborationService.isConnectedState()) {
+      collaborationService.sendSchemaChange({
+        type: 'table_deleted',
+        data: { id: tableId },
+        userId: 'current_user',
+        timestamp: new Date()
+      });
+    }
+  };
 
   const addTable = useCallback((table: Omit<Table, 'id' | 'rowCount' | 'data'>) => {
     const newTable: Table = {

@@ -20,10 +20,16 @@ const expressWs = require('express-ws')(app, server);
 // Store active connections by schema ID
 const connections = new Map();
 const userSessions = new Map();
+const schemaData = new Map(); // Store schema data for each workspace
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    activeConnections: connections.size,
+    totalUsers: userSessions.size
+  });
 });
 
 // Broadcast message to all users in a schema except sender
@@ -53,6 +59,7 @@ function cleanupConnection(ws, schemaId) {
     schemaConnections.delete(ws);
     if (schemaConnections.size === 0) {
       connections.delete(schemaId);
+      schemaData.delete(schemaId);
     }
   }
   
@@ -98,7 +105,9 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
       .map(conn => ({
         id: conn.userId,
         username: conn.username,
-        role: conn.role || 'editor'
+        role: conn.role || 'editor',
+        color: conn.color || '#3B82F6',
+        isOnline: true
       }));
     
     if (currentUsers.length > 0) {
@@ -120,6 +129,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
           ws.userId = message.userId;
           ws.username = message.username;
           ws.role = message.role || 'editor';
+          ws.color = message.color || '#3B82F6';
           userSessions.set(message.userId, ws);
           
           // Broadcast user joined to others
@@ -129,6 +139,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
               id: message.userId,
               username: message.username,
               role: ws.role,
+              color: ws.color,
               joinedAt: new Date().toISOString()
             }
           }, message.userId);
@@ -139,7 +150,8 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
         case 'user_leave':
           broadcastToSchema(schemaId, {
             type: 'user_left',
-            userId: message.userId
+            userId: message.userId,
+            username: message.username
           }, message.userId);
           
           console.log(`👋 User ${message.username} left schema ${schemaId}`);
@@ -192,6 +204,17 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
             break;
           }
           
+          // Store schema data for this workspace
+          if (!schemaData.has(schemaId)) {
+            schemaData.set(schemaId, {});
+          }
+          
+          // Update schema data
+          const currentSchemaData = schemaData.get(schemaId);
+          currentSchemaData[message.changeType] = message.data;
+          currentSchemaData.lastUpdate = new Date().toISOString();
+          currentSchemaData.lastUpdatedBy = message.userId;
+          
           // Broadcast schema changes to all users
           const schemaChangeMessage = {
             type: 'schema_change',
@@ -211,7 +234,10 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
           // Broadcast user selection to other users
           broadcastToSchema(schemaId, {
             type: 'user_selection',
-            data: message.data
+            data: {
+              ...message.data,
+              timestamp: new Date().toISOString()
+            }
           }, message.data?.userId);
           break;
           
@@ -219,13 +245,45 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
           // Broadcast presence updates
           broadcastToSchema(schemaId, {
             type: 'presence_update',
-            data: message.data
+            data: {
+              ...message.data,
+              timestamp: new Date().toISOString()
+            }
           }, message.data?.userId);
+          break;
+          
+        case 'table_created':
+        case 'table_updated':
+        case 'table_deleted':
+        case 'relationship_added':
+        case 'relationship_removed':
+          // Handle specific schema operations
+          const operationMessage = {
+            type: 'schema_operation',
+            operation: message.type,
+            data: message.data,
+            userId: message.userId,
+            username: message.username,
+            timestamp: new Date().toISOString()
+          };
+          
+          broadcastToSchema(schemaId, operationMessage, message.userId);
+          console.log(`🔄 Schema operation: ${message.type} by ${message.username || message.userId}`);
           break;
           
         case 'ping':
           // Respond to heartbeat
           ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+          
+        case 'get_schema_data':
+          // Send current schema data to requesting user
+          const schemaDataForUser = schemaData.get(schemaId) || {};
+          ws.send(JSON.stringify({
+            type: 'schema_data',
+            data: schemaDataForUser,
+            timestamp: new Date().toISOString()
+          }));
           break;
           
         default:
@@ -241,107 +299,44 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
   });
   
   // Handle connection close
-  ws.on('close', () => {
-    console.log(`❌ WebSocket connection closed for schema: ${schemaId}`);
+  ws.on('close', (code, reason) => {
+    console.log(`👥 [${ws.userId || 'unknown'}] Socket closed - Code: ${code}, Reason: ${reason}`);
     
-    // Notify other users
     if (ws.userId) {
+      // Notify other users that this user has left
       broadcastToSchema(schemaId, {
         type: 'user_left',
-        userId: ws.userId
+        userId: ws.userId,
+        username: ws.username
       }, ws.userId);
+      
+      console.log(`👋 User ${ws.username} disconnected from schema ${schemaId}`);
     }
     
     cleanupConnection(ws, schemaId);
   });
   
-  // Handle connection errors
+  // Handle errors
   ws.on('error', (error) => {
-    console.error('❌ WebSocket error:', error);
+    console.error(`❌ WebSocket error for user ${ws.userId || 'unknown'}:`, error);
     cleanupConnection(ws, schemaId);
   });
-  
-  // Heartbeat to detect broken connections
-  ws.on('pong', () => {
-    ws.isAlive = true;
-  });
 });
 
-// Portfolio updates WebSocket endpoint
-app.ws('/ws/portfolio-updates', (ws, req) => {
-  console.log('➿ Client subscribed to portfolio-updates');
-
-  ws.on('message', msg => {
-    // Broadcast updates to all portfolio clients
-    expressWs.getWss().clients.forEach(client => {
-      if (client !== ws && client.readyState === 1) { // 1 = OPEN
-        client.send(msg);
-      }
-    });
-  });
-
-  ws.on('close', () => {
-    console.log('❌ Portfolio-updates socket closed');
-  });
+// Start server
+server.listen(PORT, () => {
+  console.log(`📡 Real-time collaboration enabled`);
+  console.log(`   - ws://localhost:${PORT}/ws/collaboration/:schemaId`);
+  console.log(`   - Health check: http://localhost:${PORT}/health`);
 });
-
-// Heartbeat interval to clean up dead connections
-const heartbeatInterval = setInterval(() => {
-  console.log(`💓 Heartbeat check - Active schemas: ${connections.size}`);
-  
-  connections.forEach((schemaConnections, schemaId) => {
-    schemaConnections.forEach(ws => {
-      if (!ws.isAlive) {
-        console.log(`💀 Terminating dead connection for schema: ${schemaId}, user: ${ws.username || ws.userId || 'unknown'}`);
-        cleanupConnection(ws, schemaId);
-        return ws.terminate();
-      }
-      
-      // Reset alive flag and send ping
-      ws.isAlive = false;
-      
-      // Only ping if connection is open
-      if (ws.readyState === 1) { // 1 = OPEN
-        try {
-          ws.ping();
-        } catch (error) {
-          console.error(`❌ Error sending ping to ${ws.username || ws.userId}:`, error);
-          cleanupConnection(ws, schemaId);
-        }
-      } else {
-        // Connection is not open, clean it up
-        console.log(`🧹 Cleaning up non-open connection (state: ${ws.readyState}) for schema: ${schemaId}`);
-        cleanupConnection(ws, schemaId);
-      }
-    });
-  });
-}, 30000); // Check every 30 seconds
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('🔌 Shutting down WebSocket server...');
-  clearInterval(heartbeatInterval);
-  
-  connections.forEach((schemaConnections) => {
-    schemaConnections.forEach(ws => {
-      ws.close(1001, 'Server shutting down');
-    });
-  });
-  
+  console.log('🔄 Shutting down WebSocket server gracefully...');
   server.close(() => {
     console.log('✅ WebSocket server closed');
     process.exit(0);
   });
 });
 
-// Start server
-server.listen(PORT, () => {
-  console.log(`🚀 WebSocket server running on port ${PORT}`);
-  console.log(`📡 Real-time collaboration enabled`);
-  console.log(`🔗 WebSocket endpoints:`);
-  console.log(`   - ws://localhost:${PORT}/ws/collaboration/:schemaId`);
-  console.log(`   - ws://localhost:${PORT}/ws/portfolio-updates`);
-});
-
-// Export for testing
-module.exports = { server, connections, userSessions };
+module.exports = { app, server };

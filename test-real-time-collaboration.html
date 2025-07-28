@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Collaboration Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .user-section {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .user-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .status {
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        .messages {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background: #f9f9f9;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .message {
+            margin: 2px 0;
+            padding: 2px 5px;
+        }
+        .message.user-joined { background: #d1ecf1; }
+        .message.user-left { background: #f8d7da; }
+        .message.cursor { background: #d4edda; }
+        .message.schema { background: #fff3cd; }
+        .message.error { background: #f8d7da; color: #721c24; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        input, select {
+            padding: 5px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        .cursor-display {
+            position: relative;
+            width: 300px;
+            height: 200px;
+            border: 1px solid #ddd;
+            background: #f9f9f9;
+            margin: 10px 0;
+        }
+        .cursor {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        .cursor-label {
+            position: absolute;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            white-space: nowrap;
+            transform: translateY(-20px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Real-Time Collaboration Test</h1>
+        <p>Test the real-time collaboration system with multiple users.</p>
+
+        <div class="user-section">
+            <h3>User 1</h3>
+            <div>
+                <input type="text" id="user1-name" placeholder="Username" value="User1">
+                <select id="user1-role">
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+                <button onclick="connectUser(1)">Connect</button>
+                <button onclick="disconnectUser(1)">Disconnect</button>
+                <span id="user1-status" class="status disconnected">Disconnected</span>
+            </div>
+            <div class="messages" id="user1-messages"></div>
+            <div class="cursor-display" id="user1-cursors"></div>
+        </div>
+
+        <div class="user-section">
+            <h3>User 2</h3>
+            <div>
+                <input type="text" id="user2-name" placeholder="Username" value="User2">
+                <select id="user2-role">
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+                <button onclick="connectUser(2)">Connect</button>
+                <button onclick="disconnectUser(2)">Disconnect</button>
+                <span id="user2-status" class="status disconnected">Disconnected</span>
+            </div>
+            <div class="messages" id="user2-messages"></div>
+            <div class="cursor-display" id="user2-cursors"></div>
+        </div>
+
+        <div class="user-section">
+            <h3>User 3</h3>
+            <div>
+                <input type="text" id="user3-name" placeholder="Username" value="User3">
+                <select id="user3-role">
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+                <button onclick="connectUser(3)">Connect</button>
+                <button onclick="disconnectUser(3)">Disconnect</button>
+                <span id="user3-status" class="status disconnected">Disconnected</span>
+            </div>
+            <div class="messages" id="user3-messages"></div>
+            <div class="cursor-display" id="user3-cursors"></div>
+        </div>
+
+        <div class="user-section">
+            <h3>Test Actions</h3>
+            <button onclick="sendCursorUpdate()">Send Cursor Update</button>
+            <button onclick="sendSchemaChange()">Send Schema Change</button>
+            <button onclick="sendUserSelection()">Send User Selection</button>
+            <button onclick="clearAllMessages()">Clear All Messages</button>
+        </div>
+    </div>
+
+    <script>
+        const users = {};
+        const schemaId = 'test-schema-' + Date.now();
+        const colors = ['#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6'];
+
+        function connectUser(userNum) {
+            const name = document.getElementById(`user${userNum}-name`).value;
+            const role = document.getElementById(`user${userNum}-role`).value;
+            const color = colors[userNum - 1];
+
+            if (users[userNum]) {
+                alert('User already connected!');
+                return;
+            }
+
+            const ws = new WebSocket(`ws://localhost:5000/ws/collaboration/${schemaId}`);
+            
+            ws.onopen = () => {
+                console.log(`User ${userNum} connected`);
+                users[userNum] = { ws, name, role, color };
+                
+                // Send user join message
+                ws.send(JSON.stringify({
+                    type: 'user_join',
+                    userId: `user${userNum}`,
+                    username: name,
+                    role: role,
+                    color: color
+                }));
+
+                updateStatus(userNum, 'connected');
+                addMessage(userNum, 'Connected to WebSocket', 'info');
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                console.log(`User ${userNum} received:`, message);
+                
+                switch (message.type) {
+                    case 'connection_established':
+                        addMessage(userNum, `Connection established with client ID: ${message.clientId}`, 'info');
+                        break;
+                    case 'current_users':
+                        addMessage(userNum, `Current users: ${message.users.length}`, 'info');
+                        break;
+                    case 'user_joined':
+                        addMessage(userNum, `${message.user.username} joined as ${message.user.role}`, 'user-joined');
+                        break;
+                    case 'user_left':
+                        addMessage(userNum, `User ${message.userId} left`, 'user-left');
+                        break;
+                    case 'cursor_update':
+                        addMessage(userNum, `Cursor update from ${message.data.username}`, 'cursor');
+                        updateCursor(userNum, message.data);
+                        break;
+                    case 'schema_change':
+                        addMessage(userNum, `Schema change: ${message.changeType} by ${message.username}`, 'schema');
+                        break;
+                    case 'error':
+                        addMessage(userNum, `Error: ${message.message}`, 'error');
+                        break;
+                    default:
+                        addMessage(userNum, `Unknown message type: ${message.type}`, 'info');
+                }
+            };
+
+            ws.onclose = () => {
+                console.log(`User ${userNum} disconnected`);
+                delete users[userNum];
+                updateStatus(userNum, 'disconnected');
+                addMessage(userNum, 'Disconnected from WebSocket', 'info');
+            };
+
+            ws.onerror = (error) => {
+                console.error(`User ${userNum} WebSocket error:`, error);
+                addMessage(userNum, 'WebSocket error occurred', 'error');
+            };
+        }
+
+        function disconnectUser(userNum) {
+            if (users[userNum]) {
+                users[userNum].ws.close();
+            }
+        }
+
+        function updateStatus(userNum, status) {
+            const statusEl = document.getElementById(`user${userNum}-status`);
+            statusEl.textContent = status === 'connected' ? 'Connected' : 'Disconnected';
+            statusEl.className = `status ${status}`;
+        }
+
+        function addMessage(userNum, message, type = 'info') {
+            const messagesEl = document.getElementById(`user${userNum}-messages`);
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${type}`;
+            messageEl.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            messagesEl.appendChild(messageEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function updateCursor(userNum, cursorData) {
+            const cursorDisplay = document.getElementById(`user${userNum}-cursors`);
+            
+            // Remove existing cursor for this user
+            const existingCursor = cursorDisplay.querySelector(`[data-user="${cursorData.userId}"]`);
+            if (existingCursor) {
+                existingCursor.remove();
+            }
+
+            // Create new cursor
+            const cursor = document.createElement('div');
+            cursor.className = 'cursor';
+            cursor.style.backgroundColor = cursorData.color;
+            cursor.style.left = `${cursorData.position.x}px`;
+            cursor.style.top = `${cursorData.position.y}px`;
+            cursor.setAttribute('data-user', cursorData.userId);
+
+            const label = document.createElement('div');
+            label.className = 'cursor-label';
+            label.textContent = cursorData.username;
+            cursor.appendChild(label);
+
+            cursorDisplay.appendChild(cursor);
+
+            // Remove cursor after 5 seconds
+            setTimeout(() => {
+                if (cursor.parentNode) {
+                    cursor.remove();
+                }
+            }, 5000);
+        }
+
+        function sendCursorUpdate() {
+            const connectedUsers = Object.values(users);
+            if (connectedUsers.length === 0) {
+                alert('No users connected!');
+                return;
+            }
+
+            const user = connectedUsers[0];
+            const x = Math.random() * 280;
+            const y = Math.random() * 180;
+
+            user.ws.send(JSON.stringify({
+                type: 'cursor_update',
+                cursor: {
+                    userId: user.name,
+                    username: user.name,
+                    position: { x, y },
+                    color: user.color
+                }
+            }));
+
+            console.log(`Sent cursor update from ${user.name}: (${x}, ${y})`);
+        }
+
+        function sendSchemaChange() {
+            const connectedUsers = Object.values(users);
+            if (connectedUsers.length === 0) {
+                alert('No users connected!');
+                return;
+            }
+
+            const user = connectedUsers[0];
+            const changeTypes = ['table_created', 'table_updated', 'table_deleted'];
+            const changeType = changeTypes[Math.floor(Math.random() * changeTypes.length)];
+
+            user.ws.send(JSON.stringify({
+                type: 'schema_change',
+                changeType: changeType,
+                data: { tableName: 'TestTable', timestamp: Date.now() },
+                userId: user.name,
+                username: user.name
+            }));
+
+            console.log(`Sent schema change from ${user.name}: ${changeType}`);
+        }
+
+        function sendUserSelection() {
+            const connectedUsers = Object.values(users);
+            if (connectedUsers.length === 0) {
+                alert('No users connected!');
+                return;
+            }
+
+            const user = connectedUsers[0];
+            user.ws.send(JSON.stringify({
+                type: 'user_selection',
+                data: {
+                    userId: user.name,
+                    selection: { tableId: 'table1', columnId: 'col1' }
+                }
+            }));
+
+            console.log(`Sent user selection from ${user.name}`);
+        }
+
+        function clearAllMessages() {
+            for (let i = 1; i <= 3; i++) {
+                const messagesEl = document.getElementById(`user${i}-messages`);
+                messagesEl.innerHTML = '';
+            }
+        }
+
+        // Add click handlers to cursor displays
+        for (let i = 1; i <= 3; i++) {
+            const cursorDisplay = document.getElementById(`user${i}-cursors`);
+            cursorDisplay.addEventListener('click', (e) => {
+                if (users[i]) {
+                    const rect = cursorDisplay.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+
+                    users[i].ws.send(JSON.stringify({
+                        type: 'cursor_update',
+                        cursor: {
+                            userId: users[i].name,
+                            username: users[i].name,
+                            position: { x, y },
+                            color: users[i].color
+                        }
+                    }));
+
+                    console.log(`Sent cursor update from User${i}: (${x}, ${y})`);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

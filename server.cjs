@@ -40,7 +40,48 @@ const SMTP_PORT      = Number(process.env.SMTP_PORT);
 // Express setup
 const app = express();
 // server.cjs, app = express() çağırıldıqdan sonra
-const wsInstance = expressWs(app); 
+const wsInstance = expressWs(app);
+
+// WebSocket collaboration storage
+const connections = new Map();
+const userSessions = new Map();
+const schemaData = new Map(); // Store schema data for each workspace
+
+// Broadcast message to all users in a schema except sender
+function broadcastToSchema(schemaId, message, excludeUserId = null) {
+  const schemaConnections = connections.get(schemaId);
+  if (!schemaConnections) return;
+
+  const messageStr = JSON.stringify(message);
+  console.log(`📤 Broadcasting to schema ${schemaId}:`, message.type, `(${schemaConnections.size} connections)`);
+  
+  schemaConnections.forEach(ws => {
+    if (ws.readyState === 1 && ws.userId !== excludeUserId) { // 1 = OPEN
+      try {
+        ws.send(messageStr);
+      } catch (error) {
+        console.error('Error sending message to client:', error);
+        cleanupConnection(ws, schemaId);
+      }
+    }
+  });
+}
+
+// Clean up closed connections
+function cleanupConnection(ws, schemaId) {
+  const schemaConnections = connections.get(schemaId);
+  if (schemaConnections) {
+    schemaConnections.delete(ws);
+    if (schemaConnections.size === 0) {
+      connections.delete(schemaId);
+      schemaData.delete(schemaId);
+    }
+  }
+  
+  if (ws.userId) {
+    userSessions.delete(ws.userId);
+  }
+} 
 
 
 app.use(cors({
@@ -925,99 +966,254 @@ app.post('/api/paypal/capture-order', async (req, res) => {
 });
 
 app.ws('/ws/collaboration/:schemaId', (ws, req) => {
-  const { schemaId } = req.params;
+  const schemaId = req.params.schemaId;
   const clientId = `collab_${schemaId}_${Date.now()}`;
   console.log(`👥 [${clientId}] Collaboration socket opened for schema: ${schemaId}`);
 
-  // Send welcome message
+  ws.schemaId = schemaId;
+  ws.clientId = clientId;
+  ws.isAlive = true;
+  ws.connectedAt = Date.now();
+
+  // Add connection to schema group
+  if (!connections.has(schemaId)) {
+    connections.set(schemaId, new Set());
+  }
+  connections.get(schemaId).add(ws);
+
+  // Send connection established message
   ws.send(JSON.stringify({
     type: 'connection_established',
-    clientId,
-    schemaId,
+    clientId: clientId,
+    schemaId: schemaId,
     timestamp: new Date().toISOString()
   }));
 
-  // Reduced heartbeat interval
-  const heartbeat = setInterval(() => {
-    if (ws.readyState === 1) {
-      try {
-        ws.ping();
-      } catch (error) {
-        console.error(`👥 [${clientId}] Ping failed:`, error);
-        clearInterval(heartbeat);
-      }
-    } else {
-      console.log(`👥 [${clientId}] WebSocket not ready, clearing heartbeat`);
-      clearInterval(heartbeat);
+  // Send current users in schema
+  const schemaConnections = connections.get(schemaId);
+  if (schemaConnections) {
+    const currentUsers = Array.from(schemaConnections)
+      .filter(conn => conn.userId && conn.username)
+      .map(conn => ({
+        id: conn.userId,
+        username: conn.username,
+        role: conn.role || 'editor',
+        color: conn.color || '#3B82F6',
+        isOnline: true
+      }));
+    
+    if (currentUsers.length > 0) {
+      ws.send(JSON.stringify({
+        type: 'current_users',
+        users: currentUsers
+      }));
     }
-  }, 60000); // Increase to 60 seconds
+  }
 
-  ws.on('message', msg => {
+  // Handle incoming messages
+  ws.on('message', (data) => {
     try {
-      const message = JSON.parse(msg.toString());
-      console.log(`👥 [${clientId}] Received message:`, message.type, message);
-      
-      // Enhanced message handling with proper validation and transformation
-      let broadcastMessage = null;
-      
+      const message = JSON.parse(data.toString());
+      console.log(`📨 [${clientId}] Received:`, message.type);
+
       switch (message.type) {
-        case 'cursor_update':
-          // Validate and transform cursor_update message
-          if (message.cursor && message.cursor.userId) {
-            broadcastMessage = {
-              type: 'cursor_update',
-              data: {
-                userId: message.cursor.userId,
-                username: message.cursor.username || 'Unknown User',
-                position: message.cursor.position || { x: 0, y: 0 },
-                color: message.cursor.color || '#3B82F6',
-                lastSeen: message.cursor.lastSeen || new Date().toISOString()
-              },
-              timestamp: new Date().toISOString(),
-              schemaId,
-              clientId
-            };
-          } else {
-            console.warn(`👥 [${clientId}] Invalid cursor_update message structure:`, message);
-          }
-          break;
-          
         case 'user_join':
-          if (message.userId && message.username) {
-            broadcastMessage = {
-              type: 'user_joined',
-              user: {
-                id: message.userId,
-                username: message.username,
-                color: message.color || '#3B82F6'
-              },
-              timestamp: new Date().toISOString(),
-              schemaId,
-              clientId
-            };
-          }
+          ws.userId = message.userId;
+          ws.username = message.username;
+          ws.role = message.role || 'editor';
+          ws.color = message.color || '#3B82F6';
+          userSessions.set(message.userId, ws);
+          
+          // Broadcast user joined to others
+          broadcastToSchema(schemaId, {
+            type: 'user_joined',
+            user: {
+              id: message.userId,
+              username: message.username,
+              role: ws.role,
+              color: ws.color,
+              joinedAt: new Date().toISOString()
+            }
+          }, message.userId);
+          
+          console.log(`👋 [${clientId}] User ${message.username} (${ws.role}) joined schema ${schemaId}`);
           break;
           
         case 'user_leave':
-          if (message.userId) {
-            broadcastMessage = {
-              type: 'user_left',
-              userId: message.userId,
-              timestamp: new Date().toISOString(),
-              schemaId,
-              clientId
+          broadcastToSchema(schemaId, {
+            type: 'user_left',
+            userId: message.userId,
+            username: message.username
+          }, message.userId);
+          
+          console.log(`👋 [${clientId}] User ${message.username} left schema ${schemaId}`);
+          break;
+          
+        case 'cursor_update':
+          // Validate cursor data before broadcasting
+          if (message.cursor && 
+              typeof message.cursor === 'object' && 
+              message.cursor.userId && 
+              typeof message.cursor.userId === 'string') {
+            
+            // Add timestamp to cursor data
+            const cursorData = {
+              ...message.cursor,
+              timestamp: new Date().toISOString()
             };
+            
+            // Broadcast cursor position to other users
+            broadcastToSchema(schemaId, {
+              type: 'cursor_update',
+              data: cursorData
+            }, message.cursor.userId);
+            
+            console.log(`📍 [${clientId}] Cursor update from ${message.cursor.username || message.cursor.userId} broadcasted`);
+          } else {
+            console.warn('⚠️ Invalid cursor_update message received:', {
+              hasCursor: !!message.cursor,
+              cursorType: typeof message.cursor,
+              hasUserId: !!message.cursor?.userId,
+              userIdType: typeof message.cursor?.userId,
+              fullMessage: message
+            });
+            
+            // Send error response to sender only
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Invalid cursor_update format. Expected cursor object with userId.'
+            }));
           }
           break;
           
         case 'schema_change':
-          broadcastMessage = {
+          // Validate schema change data
+          if (!message.changeType || !message.data) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Invalid schema_change format. Expected changeType and data.'
+            }));
+            break;
+          }
+          
+          // Store schema data for this workspace
+          if (!schemaData.has(schemaId)) {
+            schemaData.set(schemaId, {});
+          }
+          
+          // Update schema data
+          const currentSchemaData = schemaData.get(schemaId);
+          currentSchemaData[message.changeType] = message.data;
+          currentSchemaData.lastUpdate = new Date().toISOString();
+          currentSchemaData.lastUpdatedBy = message.userId;
+          
+          // Broadcast schema changes to all users
+          const schemaChangeMessage = {
             type: 'schema_change',
             changeType: message.changeType,
             data: message.data,
             userId: message.userId,
-            timestamp: message.timestamp || new Date().toISOString(),
-            schemaId,
+            username: message.username,
+            timestamp: new Date().toISOString()
+          };
+          
+          broadcastToSchema(schemaId, schemaChangeMessage, message.userId);
+          
+          console.log(`🔄 [${clientId}] Schema change: ${message.changeType} by ${message.username || message.userId}`);
+          break;
+          
+        case 'table_created':
+        case 'table_updated':
+        case 'table_deleted':
+        case 'relationship_added':
+        case 'relationship_removed':
+          // Handle specific schema operations
+          const operationMessage = {
+            type: 'schema_operation',
+            operation: message.type,
+            data: message.data,
+            userId: message.userId,
+            username: message.username,
+            timestamp: new Date().toISOString()
+          };
+          
+          broadcastToSchema(schemaId, operationMessage, message.userId);
+          console.log(`🔄 [${clientId}] Schema operation: ${message.type} by ${message.username || message.userId}`);
+          break;
+          
+        case 'user_selection':
+          // Broadcast user selection to other users
+          broadcastToSchema(schemaId, {
+            type: 'user_selection',
+            data: {
+              ...message.data,
+              timestamp: new Date().toISOString()
+            }
+          }, message.data?.userId);
+          break;
+          
+        case 'presence_update':
+          // Broadcast presence updates
+          broadcastToSchema(schemaId, {
+            type: 'presence_update',
+            data: {
+              ...message.data,
+              timestamp: new Date().toISOString()
+            }
+          }, message.data?.userId);
+          break;
+          
+        case 'get_schema_data':
+          // Send current schema data to requesting user
+          const schemaDataForUser = schemaData.get(schemaId) || {};
+          ws.send(JSON.stringify({
+            type: 'schema_data',
+            data: schemaDataForUser,
+            timestamp: new Date().toISOString()
+          }));
+          break;
+          
+        case 'ping':
+          // Respond to heartbeat
+          ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+          
+        default:
+          console.log(`❓ [${clientId}] Unknown message type: ${message.type}`);
+      }
+    } catch (error) {
+      console.error('❌ Error processing WebSocket message:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Invalid message format'
+      }));
+    }
+  });
+  
+  // Handle connection close
+  ws.on('close', (code, reason) => {
+    console.log(`👥 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason}`);
+    
+    if (ws.userId) {
+      // Notify other users that this user has left
+      broadcastToSchema(schemaId, {
+        type: 'user_left',
+        userId: ws.userId,
+        username: ws.username
+      }, ws.userId);
+      
+      console.log(`👋 [${clientId}] User ${ws.username} disconnected from schema ${schemaId}`);
+    }
+    
+    cleanupConnection(ws, schemaId);
+  });
+  
+  // Handle errors
+  ws.on('error', (error) => {
+    console.error(`❌ WebSocket error for user ${ws.userId || 'unknown'}:`, error);
+    cleanupConnection(ws, schemaId);
+  });
+});
             clientId
           };
           break;
