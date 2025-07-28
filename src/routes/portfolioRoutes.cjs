@@ -10,6 +10,19 @@ router.post('/', async (req, res) => {
   console.log('POST /api/portfolios body:', req.body);
   console.log('Authenticated user:', req.user.id);
   try {
+    // Check if portfolio with same name already exists for this user
+    const existingPortfolio = await Portfolio.findOne({ 
+      user: req.user.id, 
+      name: req.body.name 
+    });
+    
+    if (existingPortfolio) {
+      console.log('❌ Portfolio with this name already exists:', req.body.name);
+      return res.status(400).json({ 
+        message: 'Bu adlı bir portfolio artıq yaratmısınız' 
+      });
+    }
+    
     const p = await Portfolio.create({
       user: req.user.id,
       name: req.body.name,

@@ -316,8 +316,10 @@ const PortfolioManager: React.FC = () => {
           timestamp: new Date().toISOString()
         });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Portfolio saxlama xətası:', err);
+      // Show error message to user
+      alert(err.message || 'Portfolio saxlama xətası');
     }
   };
 

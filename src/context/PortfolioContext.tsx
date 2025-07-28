@@ -52,8 +52,12 @@ export const PortfolioProvider: React.FC<{ children: ReactNode }> = ({ children 
         { headers }
       );
       setPortfolios(prev => [res.data, ...prev]);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Portfolio saxlama xətası:', err);
+      if (err.response?.data?.message) {
+        throw new Error(err.response.data.message);
+      }
+      throw new Error('Portfolio saxlama xətası');
     }
   }, [getAuthHeader]);
 
