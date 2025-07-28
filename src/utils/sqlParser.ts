@@ -254,27 +254,232 @@ export class SQLParser {
   static validateSQL(sql: string): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
     
-    try {
-      const statements = sql.split(';').filter(s => s.trim());
-      
-      for (const statement of statements) {
-        const trimmed = statement.trim();
-        if (!trimmed || trimmed.startsWith('--')) continue;
-        
-        try {
-          this.parseStatement(trimmed);
-        } catch (error) {
-          errors.push(error instanceof Error ? error.message : 'Unknown parsing error');
-        }
-      }
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : 'Unknown validation error');
+    // Basic syntax validation
+    if (!sql.trim()) {
+      errors.push('SQL cannot be empty');
+      return { isValid: false, errors };
     }
     
-    return {
-      isValid: errors.length === 0,
-      errors
-    };
+    // Check for balanced parentheses
+    const openParens = (sql.match(/\(/g) || []).length;
+    const closeParens = (sql.match(/\)/g) || []).length;
+    if (openParens !== closeParens) {
+      errors.push('Unbalanced parentheses');
+    }
+    
+    // Check for balanced quotes
+    const singleQuotes = (sql.match(/'/g) || []).length;
+    const doubleQuotes = (sql.match(/"/g) || []).length;
+    if (singleQuotes % 2 !== 0) {
+      errors.push('Unbalanced single quotes');
+    }
+    if (doubleQuotes % 2 !== 0) {
+      errors.push('Unbalanced double quotes');
+    }
+    
+    // Check for semicolons
+    const statements = sql.split(';').filter(s => s.trim());
+    if (statements.length === 0) {
+      errors.push('No valid SQL statements found');
+    }
+    
+    // Advanced validation for each statement
+    statements.forEach((statement, index) => {
+      const trimmedStatement = statement.trim();
+      if (!trimmedStatement) return;
+      
+      try {
+        // Validate CREATE TABLE statements
+        if (trimmedStatement.toUpperCase().startsWith('CREATE TABLE')) {
+          this.validateCreateTable(trimmedStatement, errors, index + 1);
+        }
+        
+        // Validate ALTER TABLE statements
+        if (trimmedStatement.toUpperCase().startsWith('ALTER TABLE')) {
+          this.validateAlterTable(trimmedStatement, errors, index + 1);
+        }
+        
+        // Validate INSERT statements
+        if (trimmedStatement.toUpperCase().startsWith('INSERT')) {
+          this.validateInsert(trimmedStatement, errors, index + 1);
+        }
+        
+        // Validate SELECT statements
+        if (trimmedStatement.toUpperCase().startsWith('SELECT')) {
+          this.validateSelect(trimmedStatement, errors, index + 1);
+        }
+        
+        // Validate UPDATE statements
+        if (trimmedStatement.toUpperCase().startsWith('UPDATE')) {
+          this.validateUpdate(trimmedStatement, errors, index + 1);
+        }
+        
+        // Validate DELETE statements
+        if (trimmedStatement.toUpperCase().startsWith('DELETE')) {
+          this.validateDelete(trimmedStatement, errors, index + 1);
+        }
+        
+      } catch (error) {
+        errors.push(`Statement ${index + 1}: ${error instanceof Error ? error.message : 'Invalid syntax'}`);
+      }
+    });
+    
+    return { isValid: errors.length === 0, errors };
+  }
+  
+  private static validateCreateTable(sql: string, errors: string[], statementIndex: number): void {
+    // Check for valid table name
+    const tableNameMatch = sql.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?/i);
+    if (!tableNameMatch) {
+      errors.push(`Statement ${statementIndex}: CREATE TABLE - Invalid table name`);
+      return;
+    }
+    
+    const tableName = tableNameMatch[1];
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      errors.push(`Statement ${statementIndex}: CREATE TABLE - Invalid table name "${tableName}"`);
+    }
+    
+    // Check for column definitions
+    const columnMatch = sql.match(/\((.*)\)/s);
+    if (!columnMatch) {
+      errors.push(`Statement ${statementIndex}: CREATE TABLE - Missing column definitions`);
+      return;
+    }
+    
+    // Validate column definitions
+    const columnDefs = columnMatch[1];
+    const columns = this.splitByComma(columnDefs);
+    
+    columns.forEach((colDef, index) => {
+      const trimmed = colDef.trim();
+      if (!trimmed || trimmed.toUpperCase().startsWith('CONSTRAINT') || 
+          trimmed.toUpperCase().startsWith('PRIMARY KEY') ||
+          trimmed.toUpperCase().startsWith('FOREIGN KEY') ||
+          trimmed.toUpperCase().startsWith('UNIQUE') ||
+          trimmed.toUpperCase().startsWith('INDEX')) {
+        return;
+      }
+      
+      // Validate column definition
+      const columnParts = trimmed.split(/\s+/);
+      if (columnParts.length < 2) {
+        errors.push(`Statement ${statementIndex}: Column ${index + 1} - Invalid column definition`);
+        return;
+      }
+      
+      const columnName = columnParts[0];
+      const columnType = columnParts[1];
+      
+      // Validate column name
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(columnName)) {
+        errors.push(`Statement ${statementIndex}: Column ${index + 1} - Invalid column name "${columnName}"`);
+      }
+      
+      // Validate column type
+      const validTypes = [
+        'INT', 'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT',
+        'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT', 'MEDIUMTEXT',
+        'DECIMAL', 'NUMERIC', 'FLOAT', 'DOUBLE', 'REAL',
+        'DATE', 'DATETIME', 'TIMESTAMP', 'TIME',
+        'BOOLEAN', 'BOOL', 'BIT',
+        'BLOB', 'LONGBLOB', 'MEDIUMBLOB', 'TINYBLOB',
+        'JSON', 'ENUM', 'SET'
+      ];
+      
+      const baseType = columnType.replace(/\([^)]*\)/, '').toUpperCase();
+      if (!validTypes.includes(baseType)) {
+        errors.push(`Statement ${statementIndex}: Column ${index + 1} - Invalid data type "${columnType}"`);
+      }
+    });
+  }
+  
+  private static validateAlterTable(sql: string, errors: string[], statementIndex: number): void {
+    // Check for valid table name
+    const tableNameMatch = sql.match(/ALTER\s+TABLE\s+`?(\w+)`?/i);
+    if (!tableNameMatch) {
+      errors.push(`Statement ${statementIndex}: ALTER TABLE - Invalid table name`);
+      return;
+    }
+    
+    const tableName = tableNameMatch[1];
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      errors.push(`Statement ${statementIndex}: ALTER TABLE - Invalid table name "${tableName}"`);
+    }
+    
+    // Check for valid operation
+    const operationMatch = sql.match(/ALTER\s+TABLE\s+`?\w+`?\s+(ADD|DROP|MODIFY|CHANGE|RENAME)/i);
+    if (!operationMatch) {
+      errors.push(`Statement ${statementIndex}: ALTER TABLE - Invalid operation`);
+    }
+  }
+  
+  private static validateInsert(sql: string, errors: string[], statementIndex: number): void {
+    // Check for valid table name
+    const tableNameMatch = sql.match(/INSERT\s+(?:INTO\s+)?`?(\w+)`?/i);
+    if (!tableNameMatch) {
+      errors.push(`Statement ${statementIndex}: INSERT - Invalid table name`);
+      return;
+    }
+    
+    const tableName = tableNameMatch[1];
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      errors.push(`Statement ${statementIndex}: INSERT - Invalid table name "${tableName}"`);
+    }
+    
+    // Check for VALUES clause
+    if (!sql.toUpperCase().includes('VALUES')) {
+      errors.push(`Statement ${statementIndex}: INSERT - Missing VALUES clause`);
+    }
+  }
+  
+  private static validateSelect(sql: string, errors: string[], statementIndex: number): void {
+    // Check for FROM clause
+    if (!sql.toUpperCase().includes('FROM')) {
+      errors.push(`Statement ${statementIndex}: SELECT - Missing FROM clause`);
+    }
+    
+    // Check for valid table names in FROM clause
+    const fromMatch = sql.match(/FROM\s+`?(\w+)`?/i);
+    if (fromMatch) {
+      const tableName = fromMatch[1];
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+        errors.push(`Statement ${statementIndex}: SELECT - Invalid table name "${tableName}"`);
+      }
+    }
+  }
+  
+  private static validateUpdate(sql: string, errors: string[], statementIndex: number): void {
+    // Check for valid table name
+    const tableNameMatch = sql.match(/UPDATE\s+`?(\w+)`?/i);
+    if (!tableNameMatch) {
+      errors.push(`Statement ${statementIndex}: UPDATE - Invalid table name`);
+      return;
+    }
+    
+    const tableName = tableNameMatch[1];
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      errors.push(`Statement ${statementIndex}: UPDATE - Invalid table name "${tableName}"`);
+    }
+    
+    // Check for SET clause
+    if (!sql.toUpperCase().includes('SET')) {
+      errors.push(`Statement ${statementIndex}: UPDATE - Missing SET clause`);
+    }
+  }
+  
+  private static validateDelete(sql: string, errors: string[], statementIndex: number): void {
+    // Check for valid table name
+    const tableNameMatch = sql.match(/DELETE\s+(?:FROM\s+)?`?(\w+)`?/i);
+    if (!tableNameMatch) {
+      errors.push(`Statement ${statementIndex}: DELETE - Invalid table name`);
+      return;
+    }
+    
+    const tableName = tableNameMatch[1];
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      errors.push(`Statement ${statementIndex}: DELETE - Invalid table name "${tableName}"`);
+    }
   }
 }
 

@@ -169,7 +169,7 @@ export interface DatabaseContextType {
   exportSchema: (format: string) => string;
   
   // Schema management
-  createNewSchema: (name: string) => void;
+  createNewSchema: (name: string) => Promise<void>;
   loadSchema: (schemaId: string) => void;
   saveSchema: () => void;
   
@@ -240,7 +240,63 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   }, []);
   const importSchema = useCallback((schema: Schema) => {
     setCurrentSchema(schema);
-  }, []);
+    
+    // Recreate tables and relationships in SQL engine
+    if (sqlEngine) {
+      try {
+        // Clear existing tables
+        schema.tables.forEach(table => {
+          try {
+            sqlEngine.run(`DROP TABLE IF EXISTS ${table.name}`);
+          } catch (error) {
+            console.error(`Failed to drop table ${table.name}:`, error);
+          }
+        });
+        
+        // Create tables
+        schema.tables.forEach(table => {
+          const columnDefs = table.columns.map(col => {
+            let def = `${col.name} ${col.type}`;
+            if (!col.nullable) def += ' NOT NULL';
+            if (col.defaultValue) def += ` DEFAULT '${col.defaultValue}'`;
+            if (col.isPrimaryKey) def += ' PRIMARY KEY';
+            return def;
+          }).join(', ');
+          
+          const createSQL = `CREATE TABLE ${table.name} (${columnDefs})`;
+          try {
+            sqlEngine.run(createSQL);
+            console.log('Created table in SQL engine:', createSQL);
+          } catch (error) {
+            console.error(`Failed to create table ${table.name}:`, error);
+          }
+        });
+        
+        // Create foreign key constraints for existing relationships
+        schema.relationships.forEach(relationship => {
+          const sourceTable = schema.tables.find(t => t.id === relationship.sourceTableId);
+          const targetTable = schema.tables.find(t => t.id === relationship.targetTableId);
+          
+          if (sourceTable && targetTable) {
+            const sourceColumn = sourceTable.columns.find(c => c.id === relationship.sourceColumnId);
+            const targetColumn = targetTable.columns.find(c => c.id === relationship.targetColumnId);
+            
+            if (sourceColumn && targetColumn) {
+              const fkSQL = `ALTER TABLE ${sourceTable.name} ADD CONSTRAINT fk_${sourceTable.name}_${sourceColumn.name} FOREIGN KEY (${sourceColumn.name}) REFERENCES ${targetTable.name}(${targetColumn.name})`;
+              try {
+                sqlEngine.run(fkSQL);
+                console.log('Created foreign key constraint:', fkSQL);
+              } catch (error) {
+                console.error('Failed to create foreign key constraint:', error);
+              }
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Failed to import schema to SQL engine:', error);
+      }
+    }
+  }, [sqlEngine]);
   // Enhanced team collaboration functions with MongoDB integration
   const validateUsername = useCallback(async (username: string): Promise<boolean> => {
     return await mongoService.validateUsername(username);
@@ -684,6 +740,37 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   }, [currentSchema.tables, sqlEngine]);
 
   const addRelationship = useCallback((relationship: Omit<Relationship, 'id'>) => {
+    // Validate that the relationship is valid before creating it
+    const sourceTable = currentSchema.tables.find(t => t.id === relationship.sourceTableId);
+    const targetTable = currentSchema.tables.find(t => t.id === relationship.targetTableId);
+    const sourceColumn = sourceTable?.columns.find(c => c.id === relationship.sourceColumnId);
+    const targetColumn = targetTable?.columns.find(c => c.id === relationship.targetColumnId);
+    
+    // Check if relationship is valid
+    if (!sourceTable || !targetTable || !sourceColumn || !targetColumn) {
+      console.error('Invalid relationship: Missing table or column', {
+        sourceTable: sourceTable?.name,
+        targetTable: targetTable?.name,
+        sourceColumn: sourceColumn?.name,
+        targetColumn: targetColumn?.name,
+        relationship
+      });
+      return;
+    }
+    
+    // Check if relationship already exists
+    const existingRelationship = currentSchema.relationships.find(rel => 
+      rel.sourceTableId === relationship.sourceTableId && 
+      rel.sourceColumnId === relationship.sourceColumnId &&
+      rel.targetTableId === relationship.targetTableId &&
+      rel.targetColumnId === relationship.targetColumnId
+    );
+    
+    if (existingRelationship) {
+      console.warn('Relationship already exists:', existingRelationship);
+      return;
+    }
+    
     const newRelationship: Relationship = {
       ...relationship,
       id: uuidv4(),
@@ -694,15 +781,46 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       relationships: [...prev.relationships, newRelationship],
       updatedAt: new Date(),
     }));
-  }, []);
+
+    // Create foreign key constraint in SQL engine
+    if (sqlEngine) {
+      try {
+        // Create the foreign key constraint
+        const fkSQL = `ALTER TABLE ${sourceTable.name} ADD CONSTRAINT fk_${sourceTable.name}_${sourceColumn.name} FOREIGN KEY (${sourceColumn.name}) REFERENCES ${targetTable.name}(${targetColumn.name})`;
+        sqlEngine.run(fkSQL);
+        console.log('Created foreign key constraint:', fkSQL);
+      } catch (error) {
+        console.error('Failed to create foreign key constraint in SQL engine:', error);
+      }
+    }
+  }, [currentSchema.tables, currentSchema.relationships, sqlEngine]);
 
   const removeRelationship = useCallback((relationshipId: string) => {
+    // Find the relationship before removing it
+    const relationship = currentSchema.relationships.find(r => r.id === relationshipId);
+    
     setCurrentSchema(prev => ({
       ...prev,
       relationships: prev.relationships.filter(rel => rel.id !== relationshipId),
       updatedAt: new Date(),
     }));
-  }, []);
+
+    // Remove foreign key constraint from SQL engine
+    if (sqlEngine && relationship) {
+      try {
+        const sourceTable = currentSchema.tables.find(t => t.id === relationship.sourceTableId);
+        const sourceColumn = sourceTable?.columns.find(c => c.id === relationship.sourceColumnId);
+        
+        if (sourceTable && sourceColumn) {
+          const dropFkSQL = `ALTER TABLE ${sourceTable.name} DROP CONSTRAINT fk_${sourceTable.name}_${sourceColumn.name}`;
+          sqlEngine.run(dropFkSQL);
+          console.log('Dropped foreign key constraint:', dropFkSQL);
+        }
+      } catch (error) {
+        console.error('Failed to drop foreign key constraint from SQL engine:', error);
+      }
+    }
+  }, [currentSchema.tables, currentSchema.relationships, sqlEngine]);
 
   const addIndex = useCallback((index: Omit<Index, 'id'>) => {
     const newIndex: Index = {
@@ -892,10 +1010,54 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     return exportSchema('mysql');
   }, [exportSchema]);
 
-  const createNewSchema = useCallback((name: string) => {
+  const createNewSchema = useCallback(async (name: string) => {
+    // Validate schema name
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      console.error('Schema name cannot be empty');
+      throw new Error('Schema name cannot be empty');
+    }
+    
+    // Validate schema name format (alphanumeric, underscore, hyphen)
+    const nameRegex = /^[a-zA-Z0-9_-]+$/;
+    if (!nameRegex.test(trimmedName)) {
+      console.error('Schema name can only contain letters, numbers, underscores, and hyphens');
+      throw new Error('Schema name can only contain letters, numbers, underscores, and hyphens');
+    }
+    
+    // Check for duplicate schema names locally (case-insensitive)
+    const existingLocalSchema = schemas.find(s => 
+      s.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+    
+    if (existingLocalSchema) {
+      console.error(`Schema with name "${trimmedName}" already exists locally`);
+      throw new Error(`Schema with name "${trimmedName}" already exists`);
+    }
+    
+    // Check if database exists in MongoDB
+    try {
+      const { exists, error } = await mongoService.checkDatabaseExists(trimmedName);
+      
+      if (error) {
+        console.error('Error checking database existence:', error);
+        throw new Error(`Failed to check database: ${error}`);
+      }
+      
+      if (exists) {
+        console.error(`Database "${trimmedName}" already exists in MongoDB`);
+        throw new Error(`Database "${trimmedName}" already exists`);
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Failed to check database existence');
+    }
+    
     const newSchema: Schema = {
       id: uuidv4(),
-      name,
+      name: trimmedName,
       tables: [],
       relationships: [],
       indexes: [],
@@ -921,7 +1083,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     
     setCurrentSchema(newSchema);
     setSchemas(prev => [...prev, newSchema]);
-  }, []);
+  }, [schemas]);
 
   const loadSchema = useCallback((schemaId: string) => {
     const schema = schemas.find(s => s.id === schemaId);
@@ -1031,8 +1193,27 @@ function generateMySQLScript(tables: Table[], relationships: Relationship[], ind
     const sourceColumn = sourceTable?.columns.find(c => c.id === rel.sourceColumnId);
     const targetColumn = targetTable?.columns.find(c => c.id === rel.targetColumnId);
     
+    console.log('Exporting relationship:', {
+      rel,
+      sourceTable: sourceTable?.name,
+      targetTable: targetTable?.name,
+      sourceColumn: sourceColumn?.name,
+      targetColumn: targetColumn?.name,
+      sourceTableId: rel.sourceTableId,
+      targetTableId: rel.targetTableId,
+      sourceColumnId: rel.sourceColumnId,
+      targetColumnId: rel.targetColumnId
+    });
+    
     if (sourceTable && targetTable && sourceColumn && targetColumn) {
-      script += `ALTER TABLE \`${sourceTable.name}\` ADD FOREIGN KEY (\`${sourceColumn.name}\`) REFERENCES \`${targetTable.name}\`(\`${targetColumn.name}\`);\n`;
+      script += `ALTER TABLE \`${sourceTable.name}\` ADD CONSTRAINT fk_${sourceTable.name}_${sourceColumn.name} FOREIGN KEY (\`${sourceColumn.name}\`) REFERENCES \`${targetTable.name}\`(\`${targetColumn.name}\`);\n`;
+    } else {
+      console.error('Failed to resolve relationship:', {
+        sourceTable: sourceTable?.name || 'NOT FOUND',
+        targetTable: targetTable?.name || 'NOT FOUND',
+        sourceColumn: sourceColumn?.name || 'NOT FOUND',
+        targetColumn: targetColumn?.name || 'NOT FOUND'
+      });
     }
   });
   
@@ -1055,7 +1236,7 @@ function generateMySQLScript(tables: Table[], relationships: Relationship[], ind
   return script;
 }
 
-function generatePostgreSQLScript(tables: Table[], _relationships: Relationship[], _indexes: Index[], _constraints: Constraint[], _users: User[], _permissions: Permission[]): string {
+function generatePostgreSQLScript(tables: Table[], relationships: Relationship[], _indexes: Index[], _constraints: Constraint[], _users: User[], _permissions: Permission[]): string {
   let script = '-- PostgreSQL Database Schema\n-- Generated by Database Creator\n\n';
   
   tables.forEach(table => {
@@ -1072,10 +1253,39 @@ function generatePostgreSQLScript(tables: Table[], _relationships: Relationship[
     script += ');\n\n';
   });
   
+  // Create foreign keys
+  relationships.forEach(rel => {
+    const sourceTable = tables.find(t => t.id === rel.sourceTableId);
+    const targetTable = tables.find(t => t.id === rel.targetTableId);
+    const sourceColumn = sourceTable?.columns.find(c => c.id === rel.sourceColumnId);
+    const targetColumn = targetTable?.columns.find(c => c.id === rel.targetColumnId);
+    
+    console.log('Exporting PostgreSQL relationship:', {
+      rel,
+      sourceTable: sourceTable?.name,
+      targetTable: targetTable?.name,
+      sourceColumn: sourceColumn?.name,
+      targetColumn: targetColumn?.name
+    });
+    
+    if (sourceTable && targetTable && sourceColumn && targetColumn) {
+      script += `ALTER TABLE "${sourceTable.name}" ADD CONSTRAINT fk_${sourceTable.name}_${sourceColumn.name} FOREIGN KEY ("${sourceColumn.name}") REFERENCES "${targetTable.name}"("${targetColumn.name}");\n`;
+    } else {
+      console.error('Failed to resolve PostgreSQL relationship:', {
+        sourceTable: sourceTable?.name || 'NOT FOUND',
+        targetTable: targetTable?.name || 'NOT FOUND',
+        sourceColumn: sourceColumn?.name || 'NOT FOUND',
+        targetColumn: targetColumn?.name || 'NOT FOUND'
+      });
+    }
+  });
+  
+  if (relationships.length > 0) script += '\n';
+  
   return script;
 }
 
-function generateSQLServerScript(tables: Table[], _relationships: Relationship[], _indexes: Index[], _constraints: Constraint[], _users: User[], _permissions: Permission[]): string {
+function generateSQLServerScript(tables: Table[], relationships: Relationship[], _indexes: Index[], _constraints: Constraint[], _users: User[], _permissions: Permission[]): string {
   let script = '-- SQL Server Database Schema\n-- Generated by Database Creator\n\n';
   
   tables.forEach(table => {
@@ -1092,10 +1302,24 @@ function generateSQLServerScript(tables: Table[], _relationships: Relationship[]
     script += ');\n\n';
   });
   
+  // Create foreign keys
+  relationships.forEach(rel => {
+    const sourceTable = tables.find(t => t.id === rel.sourceTableId);
+    const targetTable = tables.find(t => t.id === rel.targetTableId);
+    const sourceColumn = sourceTable?.columns.find(c => c.id === rel.sourceColumnId);
+    const targetColumn = targetTable?.columns.find(c => c.id === rel.targetColumnId);
+    
+    if (sourceTable && targetTable && sourceColumn && targetColumn) {
+      script += `ALTER TABLE [${sourceTable.name}] ADD CONSTRAINT fk_${sourceTable.name}_${sourceColumn.name} FOREIGN KEY ([${sourceColumn.name}]) REFERENCES [${targetTable.name}]([${targetColumn.name}]);\n`;
+    }
+  });
+  
+  if (relationships.length > 0) script += '\n';
+  
   return script;
 }
 
-function generateOracleScript(tables: Table[], _relationships: Relationship[], _indexes: Index[], _constraints: Constraint[], _users: User[], _permissions: Permission[]): string {
+function generateOracleScript(tables: Table[], relationships: Relationship[], _indexes: Index[], _constraints: Constraint[], _users: User[], _permissions: Permission[]): string {
   let script = '-- Oracle Database Schema\n-- Generated by Database Creator\n\n';
   
   tables.forEach(table => {
@@ -1109,6 +1333,20 @@ function generateOracleScript(tables: Table[], _relationships: Relationship[], _
     script += columnDefs.join(',\n') + '\n';
     script += ');\n\n';
   });
+  
+  // Create foreign keys
+  relationships.forEach(rel => {
+    const sourceTable = tables.find(t => t.id === rel.sourceTableId);
+    const targetTable = tables.find(t => t.id === rel.targetTableId);
+    const sourceColumn = sourceTable?.columns.find(c => c.id === rel.sourceColumnId);
+    const targetColumn = targetTable?.columns.find(c => c.id === rel.targetColumnId);
+    
+    if (sourceTable && targetTable && sourceColumn && targetColumn) {
+      script += `ALTER TABLE ${sourceTable.name} ADD CONSTRAINT fk_${sourceTable.name}_${sourceColumn.name} FOREIGN KEY (${sourceColumn.name}) REFERENCES ${targetTable.name}(${targetColumn.name});\n`;
+    }
+  });
+  
+  if (relationships.length > 0) script += '\n';
   
   return script;
 }

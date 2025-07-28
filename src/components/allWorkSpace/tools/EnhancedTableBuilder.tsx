@@ -210,21 +210,41 @@ const EnhancedTableBuilder: React.FC = () => {
     }
 
     // Create relationships for foreign keys with proper SQL generation
+    const relationshipsToAdd: any[] = [];
+    
     table.foreignKeys.forEach(fk => {
       const sourceColumn = tableData.columns.find(col => col.name === fk.columnName);
       const targetTable = currentSchema.tables.find(t => t.name === fk.referencedTable);
       const targetColumn = targetTable?.columns.find(col => col.name === fk.referencedColumn);
 
       if (sourceColumn && targetTable && targetColumn) {
-        // Add relationship to database context
-        addRelationship({
-          sourceTableId: editingTable?.id || tableData.id,
+        console.log('Creating relationship:', {
+          sourceTable: tableData.name,
+          sourceColumn: sourceColumn.name,
+          targetTable: targetTable.name,
+          targetColumn: targetColumn.name
+        });
+        
+        relationshipsToAdd.push({
+          sourceTableId: tableData.id,
           sourceColumnId: sourceColumn.id,
           targetTableId: targetTable.id,
           targetColumnId: targetColumn.id,
           cardinality: '1:N'
         });
+      } else {
+        console.error('Failed to create relationship:', {
+          sourceColumn: sourceColumn?.name || 'NOT FOUND',
+          targetTable: targetTable?.name || 'NOT FOUND',
+          targetColumn: targetColumn?.name || 'NOT FOUND',
+          fk
+        });
       }
+    });
+
+    // Add all relationships after table is created
+    relationshipsToAdd.forEach(relationship => {
+      addRelationship(relationship);
     });
 
     resetForm();
@@ -555,7 +575,7 @@ const EnhancedTableBuilder: React.FC = () => {
                     <option value="">Select reference column</option>
                     {getAvailableColumns(selectedReferenceTable).map(column => (
                       <option key={column.id} value={column.name}>
-                        {column.name} ({column.type})
+                        {column.name} ({column.type}) {column.isPrimaryKey ? '(Primary Key)' : ''}
                       </option>
                     ))}
                   </select>
@@ -578,11 +598,16 @@ const EnhancedTableBuilder: React.FC = () => {
               <button
                 onClick={() => {
                   if (selectedReferenceTable) {
+                    // Get the first primary key column from the referenced table as default
+                    const refTable = currentSchema.tables.find(t => t.name === selectedReferenceTable);
+                    const primaryKeyColumn = refTable?.columns.find(col => col.isPrimaryKey);
+                    const defaultReferencedColumn = primaryKeyColumn?.name || '';
+                    
                     const newFK: ForeignKeyDefinition = {
                       id: uuidv4(),
                       columnName: selectedColumn,
                       referencedTable: selectedReferenceTable,
-                      referencedColumn: '',
+                      referencedColumn: defaultReferencedColumn,
                       constraintName: `fk_${table.name}_${selectedColumn}`
                     };
                     setTable(prev => ({

@@ -252,6 +252,65 @@ class MongoService {
       return [];
     }
   }
+
+  async checkDatabaseExists(databaseName: string): Promise<{ exists: boolean; error?: string }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/databases/check`, {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({ databaseName })
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          window.location.href = '/';
+          return { exists: false, error: 'Authentication failed' };
+        }
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`Database check failed: ${response.status}`, errorData);
+        return { exists: false, error: errorData.message || 'Failed to check database' };
+      }
+      
+      const data = await response.json();
+      return { exists: Boolean(data.exists) };
+    } catch (error) {
+      console.error('Error checking database existence:', error);
+      return { exists: false, error: 'Network error occurred' };
+    }
+  }
+
+  async saveDatabase(databaseName: string, schemaData: any): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/databases`, {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({
+          databaseName,
+          schemaData,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        })
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          window.location.href = '/';
+          return { success: false, error: 'Authentication failed' };
+        }
+        if (response.status === 409) {
+          return { success: false, error: 'Database already exists' };
+        }
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`Failed to save database: ${response.status}`, errorData);
+        return { success: false, error: errorData.message || 'Failed to save database' };
+      }
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error saving database:', error);
+      return { success: false, error: 'Network error occurred' };
+    }
+  }
 }
 
 export const mongoService = new MongoService();
