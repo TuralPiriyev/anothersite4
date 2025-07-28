@@ -3,7 +3,7 @@ import {
   Users, Wifi, WifiOff, MousePointer, Eye, Edit, Crown, 
   Settings, Shield, Activity, Send, UserPlus, Copy, Check, X, Clock, Globe, Lock, AlertCircle
 } from 'lucide-react';
-import { useSubscription } from '../../../context/SubscriptionContext';
+import { useAuth } from '../../../context/AuthContext';
 import { useDatabase } from '../../../context/DatabaseContext';
 import { collaborationService, CollaborationUser } from '../../../services/collaborationService';
 import { mongoService } from '../../../services/mongoService';
@@ -59,7 +59,7 @@ interface RealtimeEvent {
 }
 
 const RealTimeCollaboration: React.FC = () => {
-  const { currentPlan } = useSubscription();
+  const { user: currentUser, isAuthenticated } = useAuth();
   const { 
     currentSchema, 
     inviteToWorkspace,
@@ -106,7 +106,7 @@ const RealTimeCollaboration: React.FC = () => {
 
   // Initialize collaboration when component mounts
   useEffect(() => {
-    if (currentSchema && currentSchema.id) {
+    if (currentSchema && currentSchema.id && currentUser && isAuthenticated) {
       initializeCollaboration();
     }
 
@@ -114,22 +114,24 @@ const RealTimeCollaboration: React.FC = () => {
       // Cleanup on unmount
       collaborationService.disconnect();
     };
-  }, [currentSchema?.id]);
+  }, [currentSchema?.id, currentUser, isAuthenticated]);
 
   const initializeCollaboration = async () => {
-    if (!currentSchema?.id) return;
+    if (!currentSchema?.id || !currentUser) return;
 
     try {
-      // Create a mock user for now - in real app, get from auth context
-      const currentUser: CollaborationUser = {
-        id: 'user_' + Date.now(),
-        username: 'current_user',
-        role: 'editor',
-        color: '#3B82F6'
+      // Initialize collaboration service with real user data
+      const collaborationUser: CollaborationUser = {
+        id: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        color: currentUser.color,
+        isOnline: true,
+        lastSeen: new Date()
       };
 
       // Initialize collaboration service
-      collaborationService.initialize(currentUser, currentSchema.id);
+      await collaborationService.initialize(collaborationUser, currentSchema.id);
 
       // Set up event handlers
       const handleConnected = () => {
@@ -200,7 +202,7 @@ const RealTimeCollaboration: React.FC = () => {
       const handleSchemaChange = (message: any) => {
         console.log('🔄 Schema change received:', message);
         // Handle schema changes from other users
-        if (message.data && message.userId !== 'current_user') {
+        if (message.data && message.userId !== currentUser.id) {
           // Apply changes to local schema
           handleSchemaChangeEvent(message);
         }
@@ -222,8 +224,32 @@ const RealTimeCollaboration: React.FC = () => {
       // Connect to WebSocket
       await collaborationService.connect();
 
+      // Load current workspace members from database
+      await loadWorkspaceMembers();
+
     } catch (error) {
       console.error('❌ Failed to initialize collaboration:', error);
+    }
+  };
+
+  const loadWorkspaceMembers = async () => {
+    try {
+      const members = await collaborationService.getWorkspaceMembers();
+      setCollaborators(members.map(member => ({
+        userId: member.id,
+        username: member.username,
+        role: member.role,
+        status: member.isOnline ? 'online' : 'offline',
+        joinedAt: new Date(member.joinedAt),
+        color: member.color,
+        isOnline: member.isOnline
+      })));
+      setCollaborationStatus(prev => ({
+        ...prev,
+        activeUsers: members.filter(m => m.isOnline).length
+      }));
+    } catch (error) {
+      console.error('Failed to load workspace members:', error);
     }
   };
 
@@ -255,6 +281,11 @@ const RealTimeCollaboration: React.FC = () => {
   const handleSendInvitation = async () => {
     if (!inviteUsername.trim()) {
       setInviteError('Please enter a username');
+      return;
+    }
+
+    if (!currentUser) {
+      setInviteError('You must be logged in to send invitations');
       return;
     }
 
@@ -302,7 +333,8 @@ const RealTimeCollaboration: React.FC = () => {
       // Save to real MongoDB
       const invitationResponse = await api.post('/api/invitations', {
         workspaceId: currentSchema.id,
-        inviterUsername: 'current_user',
+        inviterId: currentUser.id,
+        inviterUsername: currentUser.username,
         inviteeUsername: inviteUsername,
         role: inviteRole,
         joinCode,
@@ -337,6 +369,11 @@ const RealTimeCollaboration: React.FC = () => {
       return;
     }
 
+    if (!currentUser) {
+      setJoinError('You must be logged in to accept invitations');
+      return;
+    }
+
     setIsJoining(true);
     setJoinError('');
     setJoinSuccess('');
@@ -359,8 +396,8 @@ const RealTimeCollaboration: React.FC = () => {
       // Add member to database
       const memberResponse = await api.post('/api/members', {
         workspaceId: invitation.workspaceId,
-        id: crypto.randomUUID(),
-        username: invitation.inviteeUsername,
+        userId: currentUser.id,
+        username: currentUser.username,
         role: invitation.role,
         joinedAt: new Date().toISOString()
       });
@@ -371,6 +408,9 @@ const RealTimeCollaboration: React.FC = () => {
         
         // Switch to members tab to show the new member
         setTimeout(() => setActiveTab('members'), 2000);
+        
+        // Reload workspace members
+        await loadWorkspaceMembers();
       } else {
         setJoinError('Failed to join workspace.');
       }
@@ -396,9 +436,17 @@ const RealTimeCollaboration: React.FC = () => {
   };
 
   const removeMember = async (memberId: string) => {
+    if (!currentUser) {
+      console.error('You must be logged in to remove members');
+      return;
+    }
+
     try {
-      await removeWorkspaceMember(memberId);
+      await api.delete(`/api/members/${memberId}`);
       console.log('Member removed successfully');
+      
+      // Reload workspace members
+      await loadWorkspaceMembers();
     } catch (error) {
       console.error('Failed to remove member:', error);
     }
@@ -410,17 +458,17 @@ const RealTimeCollaboration: React.FC = () => {
     // Apply changes based on the change type
     switch (message.changeType) {
       case 'table_created':
-        if (message.data && message.userId !== 'current_user') {
+        if (message.data && message.userId !== currentUser?.id) {
           addTable(message.data);
         }
         break;
       case 'table_updated':
-        if (message.data && message.userId !== 'current_user') {
+        if (message.data && message.userId !== currentUser?.id) {
           updateTable(message.data.id, message.data);
         }
         break;
       case 'table_deleted':
-        if (message.data && message.userId !== 'current_user') {
+        if (message.data && message.userId !== currentUser?.id) {
           removeTable(message.data.id);
         }
         break;
@@ -459,7 +507,7 @@ const RealTimeCollaboration: React.FC = () => {
     collaborationService.sendSchemaChange({
       type: changeType as any,
       data,
-      userId: 'current_user',
+      userId: currentUser?.id || '',
       timestamp: new Date()
     });
   };
@@ -511,6 +559,25 @@ const RealTimeCollaboration: React.FC = () => {
     }
   };
 
+  // Check if user is authenticated
+  if (!isAuthenticated || !currentUser) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-gradient-to-r from-red-50 to-pink-50 dark:from-red-900/10 dark:to-pink-900/10 border border-red-200 dark:border-red-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Lock className="w-6 h-6 text-red-600 dark:text-red-400" />
+            <h3 className="text-lg font-semibold text-red-800 dark:text-red-200">
+              Authentication Required
+            </h3>
+          </div>
+          <p className="text-red-700 dark:text-red-300">
+            You must be logged in to use real-time collaboration features.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Connection Status */}
@@ -532,6 +599,28 @@ const RealTimeCollaboration: React.FC = () => {
             <span className={`text-sm font-medium ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
               {isConnected ? 'Real-time' : 'Offline'}
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Current User Info */}
+      <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/10 dark:to-emerald-900/10 border border-green-200 dark:border-green-800 rounded-xl p-4">
+        <div className="flex items-center gap-3">
+          <div 
+            className="w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: currentUser.color + '20' }}
+          >
+            <span className="text-lg font-bold" style={{ color: currentUser.color }}>
+              {currentUser.username.charAt(0).toUpperCase()}
+            </span>
+          </div>
+          <div>
+            <p className="font-medium text-gray-900 dark:text-white">
+              {currentUser.username}
+            </p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              {currentUser.role} • {isConnected ? 'Online' : 'Offline'}
+            </p>
           </div>
         </div>
       </div>
@@ -819,7 +908,7 @@ const RealTimeCollaboration: React.FC = () => {
                           <p className="font-medium text-gray-900 dark:text-white">
                             {member.username}
                           </p>
-                          {member.username === 'current_user' && (
+                          {member.username === currentUser.username && (
                             <span className="text-xs bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full">
                               You
                             </span>
@@ -836,7 +925,7 @@ const RealTimeCollaboration: React.FC = () => {
                         {member.role}
                         {member.role === 'owner' && <Crown className="w-3 h-3 inline ml-1" />}
                       </span>
-                      {member.role !== 'owner' && member.username !== 'current_user' && (
+                      {member.role !== 'owner' && member.username !== currentUser.username && (
                         <button
                           onClick={() => removeMember(member.userId)}
                           className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200"

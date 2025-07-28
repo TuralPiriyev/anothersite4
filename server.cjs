@@ -30,6 +30,8 @@ const { authenticate } = require('./src/middleware/auth.cjs');
 const portfolioRoutes = require('./src/routes/portfolioRoutes.cjs');
 const Invitation      = require('./src/models/Invitation.cjs');
 const Member          = require('./src/models/Member.cjs');
+const SchemaChange    = require('./src/models/SchemaChange.cjs');
+const SchemaOperation = require('./src/models/SchemaOperation.cjs');
 
 // Config
 const PORT = Number(process.env.PORT) || 5000;
@@ -1214,98 +1216,6 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
     cleanupConnection(ws, schemaId);
   });
 });
-            clientId
-          };
-          break;
-          
-        case 'user_selection':
-        case 'presence_update':
-          broadcastMessage = {
-            ...message,
-            timestamp: message.timestamp || new Date().toISOString(),
-            schemaId,
-            clientId
-          };
-          break;
-          
-        case 'ping':
-          // Respond to ping with pong
-          ws.send(JSON.stringify({
-            type: 'pong',
-            timestamp: new Date().toISOString(),
-            clientId
-          }));
-          return; // Don't broadcast ping messages
-          
-        default:
-          console.log(`👥 [${clientId}] Unknown message type: ${message.type}`);
-          broadcastMessage = {
-            ...message,
-            timestamp: new Date().toISOString(),
-            schemaId,
-            clientId
-          };
-      }
-      
-      // Broadcast validated message to other clients in the same schema
-      if (broadcastMessage) {
-        const broadcastData = JSON.stringify(broadcastMessage);
-        let broadcastCount = 0;
-        
-        wsInstance.getWss().clients.forEach(client => {
-          if (client !== ws && client.readyState === 1) {
-            try {
-              client.send(broadcastData);
-              broadcastCount++;
-            } catch (error) {
-              console.error(`👥 [${clientId}] Failed to broadcast to client:`, error);
-            }
-          }
-        });
-        
-        console.log(`👥 [${clientId}] Broadcasted ${message.type} to ${broadcastCount} clients`);
-      }
-      
-    } catch (error) {
-      console.error(`👥 [${clientId}] Error processing message:`, error);
-    }
-  });
-
-  ws.on('close', (code, reason) => {
-    console.log(`👥 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason}`);
-    clearInterval(heartbeat);
-    
-    // Broadcast user_left if this was an unexpected disconnect
-    if (code !== 1000) { // Not a normal closure
-      const leaveMessage = JSON.stringify({
-        type: 'user_left',
-        clientId,
-        timestamp: new Date().toISOString(),
-        schemaId,
-        reason: 'unexpected_disconnect'
-      });
-      
-      wsInstance.getWss().clients.forEach(client => {
-        if (client.readyState === 1) {
-          try {
-            client.send(leaveMessage);
-          } catch (error) {
-            console.error(`👥 Failed to broadcast leave message:`, error);
-          }
-        }
-      });
-    }
-  });
-
-  ws.on('error', (error) => {
-    console.error(`👥 [${clientId}] Socket error:`, error);
-    clearInterval(heartbeat);
-  });
-
-  ws.on('pong', () => {
-    console.log(`👥 [${clientId}] Pong received`);
-  });
-});
 // server.cjs (express-ws konfiqurasiyasından sonra)
 app.ws('/ws/portfolio-updates', (ws, req) => {
   const clientId = `portfolio_${Date.now()}`;
@@ -1392,3 +1302,285 @@ app.use((err, req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
    console.log(`✅ Server running on port ${PORT} (env: ${process.env.NODE_ENV})`);
  });
+
+// User management endpoints
+app.post('/api/users/online', authenticate, async (req, res) => {
+  try {
+    const { userId, schemaId } = req.body;
+    
+    // Update user online status in database
+    await User.findByIdAndUpdate(userId, {
+      isOnline: true,
+      lastSeen: new Date(),
+      currentWorkspace: schemaId
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating user online status:', error);
+    res.status(500).json({ error: 'Failed to update user status' });
+  }
+});
+
+app.post('/api/users/offline', authenticate, async (req, res) => {
+  try {
+    const { userId, schemaId } = req.body;
+    
+    // Update user offline status in database
+    await User.findByIdAndUpdate(userId, {
+      isOnline: false,
+      lastSeen: new Date(),
+      currentWorkspace: null
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating user offline status:', error);
+    res.status(500).json({ error: 'Failed to update user status' });
+  }
+});
+
+app.post('/api/users/presence', authenticate, async (req, res) => {
+  try {
+    const { userId, status, currentAction, schemaId } = req.body;
+    
+    // Update user presence in database
+    await User.findByIdAndUpdate(userId, {
+      presence: status,
+      currentAction,
+      lastSeen: new Date()
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating user presence:', error);
+    res.status(500).json({ error: 'Failed to update user presence' });
+  }
+});
+
+// Workspace collaboration endpoints
+app.get('/api/workspaces/:workspaceId/members', authenticate, async (req, res) => {
+  try {
+    const { workspaceId } = req.params;
+    
+    // Get workspace members from database
+    const members = await Member.find({ workspaceId }).populate('userId', 'username email avatar');
+    
+    const memberData = members.map(member => ({
+      id: member.userId._id,
+      username: member.userId.username,
+      role: member.role,
+      joinedAt: member.joinedAt,
+      isOnline: member.userId.isOnline || false,
+      lastSeen: member.userId.lastSeen,
+      color: member.userId.color || '#3B82F6'
+    }));
+    
+    res.json({ members: memberData });
+  } catch (error) {
+    console.error('Error getting workspace members:', error);
+    res.status(500).json({ error: 'Failed to get workspace members' });
+  }
+});
+
+app.get('/api/workspaces/:workspaceId/invitations', authenticate, async (req, res) => {
+  try {
+    const { workspaceId } = req.params;
+    
+    // Get workspace invitations from database
+    const invitations = await Invitation.find({ workspaceId }).populate('inviterId', 'username');
+    
+    res.json({ invitations });
+  } catch (error) {
+    console.error('Error getting workspace invitations:', error);
+    res.status(500).json({ error: 'Failed to get workspace invitations' });
+  }
+});
+
+// Schema changes tracking
+app.post('/api/schema/changes', authenticate, async (req, res) => {
+  try {
+    const { schemaId, changeType, data, userId, timestamp } = req.body;
+    
+    // Save schema change to database
+    const schemaChange = new SchemaChange({
+      schemaId,
+      changeType,
+      data,
+      userId,
+      timestamp: new Date(timestamp)
+    });
+    
+    await schemaChange.save();
+    
+    res.json({ success: true, changeId: schemaChange._id });
+  } catch (error) {
+    console.error('Error saving schema change:', error);
+    res.status(500).json({ error: 'Failed to save schema change' });
+  }
+});
+
+app.post('/api/schema/operations', authenticate, async (req, res) => {
+  try {
+    const { schemaId, operation, data, userId, timestamp } = req.body;
+    
+    // Save schema operation to database
+    const schemaOperation = new SchemaOperation({
+      schemaId,
+      operation,
+      data,
+      userId,
+      timestamp: new Date(timestamp)
+    });
+    
+    await schemaOperation.save();
+    
+    res.json({ success: true, operationId: schemaOperation._id });
+  } catch (error) {
+    console.error('Error saving schema operation:', error);
+    res.status(500).json({ error: 'Failed to save schema operation' });
+  }
+});
+
+// Get schema changes history
+app.get('/api/schema/:schemaId/changes', authenticate, async (req, res) => {
+  try {
+    const { schemaId } = req.params;
+    const { limit = 50 } = req.query;
+    
+    // Get recent schema changes from database
+    const changes = await SchemaChange.find({ schemaId })
+      .sort({ timestamp: -1 })
+      .limit(parseInt(limit))
+      .populate('userId', 'username');
+    
+    res.json({ changes });
+  } catch (error) {
+    console.error('Error getting schema changes:', error);
+    res.status(500).json({ error: 'Failed to get schema changes' });
+  }
+});
+
+// Authentication endpoints
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '7d' }
+    );
+    
+    // Update user online status
+    user.isOnline = true;
+    user.lastSeen = new Date();
+    await user.save();
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        isOnline: user.isOnline,
+        lastSeen: user.lastSeen
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    
+    // Check if user already exists
+    const existingUser = await User.findOne({ 
+      $or: [{ email }, { username }] 
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Create new user
+    const user = new User({
+      username,
+      email,
+      password: hashedPassword,
+      role: 'editor',
+      isOnline: true,
+      lastSeen: new Date()
+    });
+    
+    await user.save();
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '7d' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        isOnline: user.isOnline,
+        lastSeen: user.lastSeen
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.get('/api/auth/me', authenticate, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        isOnline: user.isOnline,
+        lastSeen: user.lastSeen
+      }
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ error: 'Failed to get user' });
+  }
+});

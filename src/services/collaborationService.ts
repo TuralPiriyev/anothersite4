@@ -4,6 +4,8 @@ export interface CollaborationUser {
   role: 'admin' | 'editor' | 'viewer';
   avatar?: string;
   color: string;
+  isOnline: boolean;
+  lastSeen: Date;
 }
 
 export interface CursorPosition {
@@ -21,6 +23,7 @@ export interface SchemaChange {
 }
 
 import { simpleWebSocketService } from './simpleWebSocketService';
+import api from '../utils/api';
 
 // WebSocket URL helper
 const getWebSocketUrl = (schemaId: string) => {
@@ -44,20 +47,37 @@ export default class CollaborationService {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private cursorUpdateThrottle: NodeJS.Timeout | null = null;
 
   constructor() {
     // All WebSocket operations delegated to SimpleWebSocketService
   }
 
-  initialize(user: CollaborationUser, schemaId: string) {
+  async initialize(user: CollaborationUser, schemaId: string) {
     this.currentUser = user;
     this.schemaId = schemaId;
     this.userJoinSent = false;
     this.reconnectAttempts = 0;
-    console.log('🔧 CollaborationService initialized:', { user: user.username, schemaId });
+    
+    console.log('🔧 CollaborationService initialized:', { 
+      user: user.username, 
+      schemaId,
+      userId: user.id,
+      role: user.role 
+    });
+
+    // Update user online status in database
+    try {
+      await api.post('/api/users/online', { 
+        userId: user.id,
+        schemaId: schemaId 
+      });
+    } catch (error) {
+      console.error('Failed to update user online status:', error);
+    }
   }
 
-  connect(): Promise<void> {
+  async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.currentUser || !this.schemaId) {
         const error = new Error('Must initialize with user and schema ID before connecting');
@@ -94,6 +114,16 @@ export default class CollaborationService {
             this.userJoinSent = false;
             this.stopHeartbeat();
             this.emit('disconnected');
+            
+            // Update user offline status in database
+            if (this.currentUser) {
+              api.post('/api/users/offline', { 
+                userId: this.currentUser.id,
+                schemaId: this.schemaId 
+              }).catch(error => {
+                console.error('Failed to update user offline status:', error);
+              });
+            }
             
             // Attempt to reconnect
             if (this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -138,7 +168,7 @@ export default class CollaborationService {
     }
   }
 
-  private sendUserJoin() {
+  private async sendUserJoin() {
     if (!this.currentUser || !this.schemaId || this.userJoinSent) return;
     
     try {
@@ -261,23 +291,49 @@ export default class CollaborationService {
       return;
     }
 
-    const cursorMessage = {
-      type: 'cursor_update',
-      cursor: {
-        userId: this.currentUser.id,
-        username: this.currentUser.username,
-        role: this.currentUser.role,
-        position,
-        color: this.currentUser.color,
-        lastSeen: new Date().toISOString()
-      }
-    };
+    // Throttle cursor updates to prevent spam
+    if (this.cursorUpdateThrottle) {
+      clearTimeout(this.cursorUpdateThrottle);
+    }
 
-    console.log('📍 Sending cursor update:', cursorMessage);
-    this.sendMessage(cursorMessage);
+    this.cursorUpdateThrottle = setTimeout(() => {
+      const cursorMessage = {
+        type: 'cursor_update',
+        cursor: {
+          userId: this.currentUser!.id,
+          username: this.currentUser!.username,
+          role: this.currentUser!.role,
+          position,
+          color: this.currentUser!.color,
+          lastSeen: new Date().toISOString()
+        }
+      };
+
+      console.log('📍 Sending cursor update:', cursorMessage);
+      this.sendMessage(cursorMessage);
+    }, 100); // Throttle to 100ms
   }
 
-  sendSchemaChange(change: SchemaChange) {
+  async sendSchemaChange(change: SchemaChange) {
+    if (!this.currentUser) {
+      console.warn('⚠️ Cannot send schema change: no current user');
+      return;
+    }
+
+    // First save to database
+    try {
+      await api.post('/api/schema/changes', {
+        schemaId: this.schemaId,
+        changeType: change.type,
+        data: change.data,
+        userId: this.currentUser.id,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Failed to save schema change to database:', error);
+    }
+
+    // Then broadcast to other users
     this.sendMessage({
       type: 'schema_change',
       changeType: change.type,
@@ -288,7 +344,26 @@ export default class CollaborationService {
     });
   }
 
-  sendSchemaOperation(operation: string, data: any) {
+  async sendSchemaOperation(operation: string, data: any) {
+    if (!this.currentUser) {
+      console.warn('⚠️ Cannot send schema operation: no current user');
+      return;
+    }
+
+    // Save to database first
+    try {
+      await api.post('/api/schema/operations', {
+        schemaId: this.schemaId,
+        operation: operation,
+        data: data,
+        userId: this.currentUser.id,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Failed to save schema operation to database:', error);
+    }
+
+    // Then broadcast
     this.sendMessage({
       type: operation,
       data: data,
@@ -310,7 +385,20 @@ export default class CollaborationService {
     });
   }
 
-  updatePresence(status: 'online' | 'away' | 'busy', currentAction?: string) {
+  async updatePresence(status: 'online' | 'away' | 'busy', currentAction?: string) {
+    // Update in database
+    try {
+      await api.post('/api/users/presence', {
+        userId: this.currentUser!.id,
+        status,
+        currentAction,
+        schemaId: this.schemaId
+      });
+    } catch (error) {
+      console.error('Failed to update presence in database:', error);
+    }
+
+    // Broadcast to other users
     this.sendMessage({
       type: 'presence_update',
       data: {
@@ -323,7 +411,7 @@ export default class CollaborationService {
     });
   }
 
-  requestSchemaData() {
+  async requestSchemaData() {
     this.sendMessage({
       type: 'get_schema_data'
     });
@@ -378,7 +466,7 @@ export default class CollaborationService {
     }
   }
 
-  disconnect() {
+  async disconnect() {
     console.log('🔌 Disconnecting from Collaboration WebSocket');
     
     this.stopHeartbeat();
@@ -397,6 +485,18 @@ export default class CollaborationService {
         simpleWebSocketService.disconnect(this.connectionId);
       } catch (error) {
         console.error('❌ Error during disconnect:', error);
+      }
+    }
+    
+    // Update user offline status in database
+    if (this.currentUser) {
+      try {
+        await api.post('/api/users/offline', { 
+          userId: this.currentUser.id,
+          schemaId: this.schemaId 
+        });
+      } catch (error) {
+        console.error('Failed to update user offline status:', error);
       }
     }
     
@@ -421,6 +521,28 @@ export default class CollaborationService {
       return 'connecting';
     } else {
       return 'disconnected';
+    }
+  }
+
+  // Get current workspace members from database
+  async getWorkspaceMembers(): Promise<CollaborationUser[]> {
+    try {
+      const response = await api.get(`/api/workspaces/${this.schemaId}/members`);
+      return response.data.members;
+    } catch (error) {
+      console.error('Failed to get workspace members:', error);
+      return [];
+    }
+  }
+
+  // Get workspace invitations
+  async getWorkspaceInvitations(): Promise<any[]> {
+    try {
+      const response = await api.get(`/api/workspaces/${this.schemaId}/invitations`);
+      return response.data.invitations;
+    } catch (error) {
+      console.error('Failed to get workspace invitations:', error);
+      return [];
     }
   }
 
