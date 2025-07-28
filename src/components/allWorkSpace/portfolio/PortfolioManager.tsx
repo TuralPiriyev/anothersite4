@@ -6,6 +6,7 @@ import { usePortfolio, Portfolio } from '../../../context/PortfolioContext';
 import { mongoService } from '../../../services/mongoService';
 import { simpleWebSocketService } from '../../../services/simpleWebSocketService';
 import { SQLParser } from '../../../utils/sqlParser';
+import NotificationModal from '../../common/NotificationModal';
 
 interface ImportedColumn {
   id: string;
@@ -45,6 +46,19 @@ const PortfolioManager: React.FC = () => {
   const [importError, setImportError] = useState('');
   const [portfolioConnectionId, setPortfolioConnectionId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  
+  // Notification modal state
+  const [notification, setNotification] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error' | 'info' | 'warning';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info'
+  });
   
   const handlePortfolioUpdate = (message: any) => {
     switch (message.type) {
@@ -144,10 +158,26 @@ const PortfolioManager: React.FC = () => {
       setNewSchemaName('');
       setShowCreateModal(false);
       setCreateError('');
+      
+      // Show success notification
+      setNotification({
+        isOpen: true,
+        title: 'Success',
+        message: 'Schema created successfully',
+        type: 'success'
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to create schema';
       setCreateError(errorMessage);
       console.error('Schema creation error:', errorMessage);
+      
+      // Show error notification
+      setNotification({
+        isOpen: true,
+        title: 'Error',
+        message: errorMessage,
+        type: 'error'
+      });
     }
   };
 
@@ -289,8 +319,25 @@ const PortfolioManager: React.FC = () => {
       setImportError('');
       setNewSchemaName('');
       
+      // Show success notification
+      setNotification({
+        isOpen: true,
+        title: 'Success',
+        message: 'SQL schema imported successfully',
+        type: 'success'
+      });
+      
     } catch (error) {
-      setImportError('Failed to parse SQL. Please check your syntax.');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to parse SQL. Please check your syntax.';
+      setImportError(errorMessage);
+      
+      // Show error notification
+      setNotification({
+        isOpen: true,
+        title: 'Error',
+        message: errorMessage,
+        type: 'error'
+      });
     }
   };
 
@@ -316,18 +363,49 @@ const PortfolioManager: React.FC = () => {
           timestamp: new Date().toISOString()
         });
       }
-    } catch (err) {
-      console.error('Portfolio saxlama xətası:', err);
+      
+      // Show success notification
+      setNotification({
+        isOpen: true,
+        title: 'Success',
+        message: 'Portfolio saved successfully',
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error('Portfolio save error:', err);
+      // Show error notification
+      setNotification({
+        isOpen: true,
+        title: 'Error',
+        message: err.message || 'Failed to save portfolio',
+        type: 'error'
+      });
     }
   };
 
   const confirmAndDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this database?')) return;
+    if (!window.confirm('Are you sure you want to delete this portfolio?')) return;
     try {
       await deletePortfolio(id);
       await loadPortfolios();
-    } catch (err) {
-      console.error('Portfolio silmə xətası:', err);
+      
+      // Show success notification
+      setNotification({
+        isOpen: true,
+        title: 'Success',
+        message: 'Portfolio deleted successfully',
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error('Portfolio delete error:', err);
+      
+      // Show error notification
+      setNotification({
+        isOpen: true,
+        title: 'Error',
+        message: err.message || 'Failed to delete portfolio',
+        type: 'error'
+      });
     }
   };
 
@@ -335,8 +413,24 @@ const PortfolioManager: React.FC = () => {
     try {
       const schemaObj = JSON.parse(p.scripts);
       importSchema(schemaObj);
+      
+      // Show success notification
+      setNotification({
+        isOpen: true,
+        title: 'Success',
+        message: `Portfolio "${p.name}" loaded successfully`,
+        type: 'success'
+      });
     } catch (error) {
       console.error('Could not parse portfolio scripts:', error);
+      
+      // Show error notification
+      setNotification({
+        isOpen: true,
+        title: 'Error',
+        message: 'Failed to load portfolio. Invalid format.',
+        type: 'error'
+      });
     }
   };
   
@@ -607,6 +701,15 @@ const PortfolioManager: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Notification Modal */}
+      <NotificationModal
+        isOpen={notification.isOpen}
+        onClose={() => setNotification(prev => ({ ...prev, isOpen: false }))}
+        title={notification.title}
+        message={notification.message}
+        type={notification.type}
+      />
     </div>
   );
 };
