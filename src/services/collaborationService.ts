@@ -110,8 +110,10 @@ export default class CollaborationService {
         type: 'user_join',
         userId: this.currentUser.id,
         username: this.currentUser.username,
+        role: this.currentUser.role,
         color: this.currentUser.color,
-        schemaId: this.schemaId
+        schemaId: this.schemaId,
+        timestamp: new Date().toISOString()
       });
       this.userJoinSent = true;
       console.log('📤 User join message sent successfully');
@@ -208,6 +210,7 @@ export default class CollaborationService {
       cursor: {
         userId: this.currentUser.id,
         username: this.currentUser.username,
+        role: this.currentUser.role,
         position,
         color: this.currentUser.color,
         lastSeen: new Date().toISOString()
@@ -224,6 +227,7 @@ export default class CollaborationService {
       changeType: change.type,
       data: change.data,
       userId: this.currentUser!.id,
+      username: this.currentUser!.username,
       timestamp: new Date().toISOString()
     });
   }

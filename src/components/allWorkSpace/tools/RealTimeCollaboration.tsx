@@ -328,15 +328,15 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
         return;
       }
 
-      // Create invitation using database context
-      const joinCode = await inviteToWorkspace({
-        inviterUsername: 'current_user',
-        inviteeUsername: inviteUsername,
-        role: inviteRole
-      });
+      // Generate join code
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let joinCode = '';
+      for (let i = 0; i < 8; i++) {
+        joinCode += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
 
       // Save to real MongoDB
-      await api.post('/api/invitations', {
+      const invitationResponse = await api.post('/api/invitations', {
         workspaceId: currentSchema.id,
         inviterUsername: 'current_user',
         inviteeUsername: inviteUsername,
@@ -347,15 +347,20 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
         status: 'pending'
       });
 
-      setGeneratedCode(joinCode);
-      setInviteSuccess(`Invitation sent successfully! Share this join code with ${inviteUsername}:`);
+      if (invitationResponse.data) {
+        setGeneratedCode(joinCode);
+        setInviteSuccess(`Invitation sent successfully! Share this join code with ${inviteUsername}:`);
+        
+        // Reset form
+        setInviteUsername('');
+        setInviteRole('editor');
+      } else {
+        setInviteError('Failed to create invitation. Please try again.');
+      }
       
-      // Reset form
-      setInviteUsername('');
-      setInviteRole('editor');
-      
-    } catch (error) {
-      setInviteError('Failed to send invitation. Please try again.');
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error || 'Failed to send invitation. Please try again.';
+      setInviteError(errorMessage);
       console.error('Invitation error:', error);
     } finally {
       setIsInviting(false);
@@ -382,34 +387,33 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
         return;
       }
 
-      const success = await acceptWorkspaceInvitation(joinCode.toUpperCase());
+      const invitation = response.data.invitation;
       
-      if (!success) {
-        setJoinError('Failed to join workspace.');
-        setIsJoining(false);
-        return;
-      }
-
       // Update invitation status in database
-      await api.put(`/api/invitations/${response.data.invitation.id}`, { status: 'accepted' });
+      await api.put(`/api/invitations/${invitation.id}`, { status: 'accepted' });
 
       // Add member to database
-      await api.post('/api/members', {
-        workspaceId: currentSchema.id,
+      const memberResponse = await api.post('/api/members', {
+        workspaceId: invitation.workspaceId,
         id: crypto.randomUUID(),
-        username: response.data.invitation.inviteeUsername,
-        role: response.data.invitation.role,
+        username: invitation.inviteeUsername,
+        role: invitation.role,
         joinedAt: new Date().toISOString()
       });
 
-      setJoinSuccess(`Successfully joined the workspace! You now have ${response.data.invitation.role} access.`);
-      setJoinCode('');
+      if (memberResponse.data) {
+        setJoinSuccess(`Successfully joined the workspace! You now have ${invitation.role} access.`);
+        setJoinCode('');
+        
+        // Switch to members tab to show the new member
+        setTimeout(() => setActiveTab('members'), 2000);
+      } else {
+        setJoinError('Failed to join workspace.');
+      }
       
-      // Switch to members tab to show the new member
-      setTimeout(() => setActiveTab('members'), 2000);
-      
-    } catch (error) {
-      setJoinError('Failed to accept invitation. Please try again.');
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error || 'Failed to accept invitation. Please try again.';
+      setJoinError(errorMessage);
       console.error('Join error:', error);
     } finally {
       setIsJoining(false);
