@@ -156,7 +156,7 @@ export const SubscriptionProvider: React.FC<SubscriptionProviderProps> = ({ chil
   useEffect(() => {
     (async () => {
       try {
-       const { data } = await api.get('/api/users/me');        setCurrentPlan(data.subscriptionPlan.toLowerCase());
+       const { data } = await api.get('/users/me');        setCurrentPlan(data.subscriptionPlan.toLowerCase());
         setExpiresAt(data.expiresAt ? new Date(data.expiresAt) : null);
       } catch (err) {
         console.error('Failed to fetch subscription:', err);
