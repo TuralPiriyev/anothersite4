@@ -23,17 +23,21 @@ axios.interceptors.request.use(config => {
 });
 
 // Response interceptor for handling auth errors
+// src/utils/api.ts — response interceptor
 axios.interceptors.response.use(
   response => response,
   error => {
     if (error.response?.status === 401) {
-      // Clear auth data and redirect to login
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/';
+      // Əgər artıq login səhifəsində deyilsə redirect et
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
 );
+
 
 export default axios;
