@@ -8,7 +8,9 @@ const userSchema = new mongoose.Schema({
   phone:           { type: String, required: true, unique: true },
   password:        { type: String, required: true },
   subscriptionPlan:{ type: String, enum: ['Free','Pro','Ultimate'], default: 'Free' },
-  expiresAt: { type: Date, default: null }
+  expiresAt: { type: Date, default: null },
+  isOnline:        { type: Boolean, default: false },
+  lastSeen:        { type: Date, default: Date.now }
 
 }, {
   timestamps: true
