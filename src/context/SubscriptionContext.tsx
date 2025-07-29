@@ -153,10 +153,13 @@ export const SubscriptionProvider: React.FC<SubscriptionProviderProps> = ({ chil
 
   const planLimits = PLAN_LIMITS[currentPlan];
 
-  useEffect(() => {
-    (async () => {
+  (async () => {
       try {
-       const { data } = await api.get('/users/me');        setCurrentPlan(data.subscriptionPlan.toLowerCase());
+        // Yeni endpoint: subscription status
+        const { data } = await api.get('/subscription/status');
+        // data.plan içində gələn plan ('free'|'pro'|'ultimate')
+        setCurrentPlan(data.plan as SubscriptionPlan);
+        // data.expiresAt içində gələn tarix
         setExpiresAt(data.expiresAt ? new Date(data.expiresAt) : null);
       } catch (err) {
         console.error('Failed to fetch subscription:', err);
