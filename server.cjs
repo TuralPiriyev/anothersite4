@@ -1233,7 +1233,7 @@ const distPath = path.join(__dirname, "dist");
 app.use(express.static(distPath));
 
 // SPA üçün fallback: bütün GET istəkləri index.html-ə yönlənsin
-app.get(/^\/(?!api).*/, (req, res) => {
+app.get(/^\/(?!api|ws).*/, (req, res) => {
   res.sendFile(path.join(distPath, "index.html"));
 });
 
