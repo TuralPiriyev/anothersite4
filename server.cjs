@@ -47,7 +47,7 @@ const wsInstance = expressWs(app);
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_ORIGIN, // .env faylından frontend URL-i
+    origin: ['https://startup-1-j563.onrender.com', 'http://localhost:5173', 'http://localhost:3000'],
     credentials: true, // Cookie və sessiya məlumatlarını ötürmək üçün
   })
 );
@@ -168,6 +168,182 @@ app.get('/api/users/me', authenticate, async (req, res) => {
     res.json(user);
   } catch (err) {
     console.error('GET /api/users/me error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/subscription/status', authenticate, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId, 'subscriptionPlan expiresAt');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    const isExpired = user.expiresAt && new Date() > user.expiresAt;
+    const subscriptionStatus = {
+      plan: user.subscriptionPlan || 'free',
+      isActive: !isExpired,
+      expiresAt: user.expiresAt,
+      isExpired
+    };
+    
+    res.json(subscriptionStatus);
+  } catch (err) {
+    console.error('GET /api/subscription/status error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/auth/me', authenticate, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId, 'fullName email username subscriptionPlan expiresAt');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ user });
+  } catch (err) {
+    console.error('GET /api/auth/me error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ message:'Invalid email or password' });
+    }
+    const payload = { userId:user._id, email:user.email };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
+    const uobj = user.toObject(); delete uobj.password;
+
+     res.cookie('token', token, {
+     httpOnly: true,
+     secure: process.env.NODE_ENV === 'production',
+     sameSite: 'none',
+     maxAge: 24 * 60 * 60 * 1000, // 1 gün
+   });
+    res.json({ message:'Login successful', token, user:uobj });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ message:'Server error during login' });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    const conflict = await User.findOne({ $or: [{ email }, { username }] });
+    if (conflict) {
+      const field = conflict.email===email ? 'Email' : 'Username';
+      return res.status(400).json({ message: `${field} already registered` });
+    }
+    const hashed = await bcrypt.hash(password, 10);
+    const newUser = await new User({ username, email, password: hashed }).save();
+    const payload = { userId:newUser._id, email:newUser.email };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
+    const uobj = newUser.toObject(); delete uobj.password;
+    res.status(201).json({ message:'User registered', token, user:uobj });
+  } catch (err) {
+    console.error('Register error:', err);
+    res.status(500).json({ message: 'Server error during registration' });
+  }
+});
+
+app.post('/api/users/online', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    await User.findByIdAndUpdate(userId, { isOnline: true, lastSeen: new Date() });
+    res.json({ message: 'User online status updated' });
+  } catch (err) {
+    console.error('User online error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/users/offline', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    await User.findByIdAndUpdate(userId, { isOnline: false, lastSeen: new Date() });
+    res.json({ message: 'User offline status updated' });
+  } catch (err) {
+    console.error('User offline error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/users/validate', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const user = await User.findOne({ username });
+    res.json({ exists: !!user });
+  } catch (err) {
+    console.error('User validation error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/invitations', async (req, res) => {
+  try {
+    const { workspaceId, inviterUsername, inviteeUsername, joinCode, expiresAt } = req.body;
+    const invitation = await new Invitation({
+      workspaceId,
+      inviterUsername,
+      inviteeUsername,
+      joinCode,
+      createdAt: new Date(),
+      expiresAt: new Date(expiresAt)
+    }).save();
+    res.json(invitation);
+  } catch (err) {
+    console.error('Create invitation error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/invitations/validate', async (req, res) => {
+  try {
+    const { joinCode } = req.body;
+    const invitation = await Invitation.findOne({ 
+      joinCode: joinCode.toUpperCase(),
+      status: 'pending',
+      expiresAt: { $gt: new Date() }
+    });
+    
+    if (!invitation) {
+      return res.json({ valid: false, error: 'Invalid or expired code' });
+    }
+    
+    res.json({ valid: true, invitation });
+  } catch (err) {
+    console.error('Validate invitation error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/invitations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    await Invitation.findByIdAndUpdate(id, { status });
+    res.json({ message: 'Invitation updated' });
+  } catch (err) {
+    console.error('Update invitation error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/members', async (req, res) => {
+  try {
+    const { workspaceId, id, username, role, joinedAt } = req.body;
+    const member = await new Member({
+      workspaceId,
+      id,
+      username,
+      role,
+      joinedAt: new Date(joinedAt),
+      updatedAt: new Date()
+    }).save();
+    res.json(member);
+  } catch (err) {
+    console.error('Create member error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -778,84 +954,25 @@ ${message}
   }
 });
 // Auth routes
-app.post('/api/register', async (req, res) => {
-  try {
-    const { fullName, username, email, phone, password } = req.body;
-    const conflict = await User.findOne({ $or: [{ email }, { phone }, { username }] });
-    if (conflict) {
-      const field = conflict.email===email ? 'Email'
-                  : conflict.phone===phone ? 'Phone'
-                  : 'Username';
-      return res.status(400).json({ message: `${field} already registered` });
-    }
-    const code = generateCode(), expires = Date.now() + 5*60_000;
-    const hashed = await bcrypt.hash(password, 10);
-    verificationCodes.set(email, { code, expires, data:{ fullName, username, email, phone, password:hashed } });
-    await sendCode(email, code);
-    res.json({ message: 'Verification code sent' });
-  } catch (err) {
-    console.error('Register error:', err);
-    res.status(500).json({ message: 'Server error during registration' });
-  }
-});
 
-app.post('/api/verify-code', async (req, res) => {
-  try {
-    const { email, code } = req.body;
-    const rec = verificationCodes.get(email);
-    if (!rec) return res.status(400).json({ message: 'No pending registration' });
-    if (rec.code!==code) return res.status(400).json({ message: 'Invalid code' });
-    if (Date.now()>rec.expires) {
-      verificationCodes.delete(email);
-      return res.status(400).json({ message: 'Code expired' });
-    }
-    const newUser = await new User(rec.data).save();
-    verificationCodes.delete(email);
-    const payload = { userId:newUser._id, email:newUser.email };
-    const token   = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
-    const uobj    = newUser.toObject(); delete uobj.password;
-    res.status(201).json({ message:'User registered', token, user:uobj });
-  } catch (err) {
-    console.error('Verify-code error:', err);
-    res.status(500).json({ message: 'Server error during code verification' });
-  }
-});
 
-app.post('/api/resend-code', async (req, res) => {
-  try {
-    const { email } = req.body;
-    const rec = verificationCodes.get(email);
-    if (!rec) return res.status(404).json({ message:'No pending registration' });
-    rec.code = generateCode(); rec.expires = Date.now() + 5*60_000;
-    await sendCode(email, rec.code);
-    res.json({ message:'New code sent' });
-  } catch (err) {
-    console.error('Resend-code error:', err);
-    res.status(500).json({ message:'Server error during resend' });
-  }
-});
 
-app.post('/api/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ message:'Invalid email or password' });
-    }
-    const payload = { userId:user._id, email:user.email };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '1d' });
-    const uobj = user.toObject(); delete uobj.password;
 
-     res.cookie('token', token, {
-     httpOnly: true,
-     secure: process.env.NODE_ENV === 'production',
-     sameSite: 'none',
-     maxAge: 24 * 60 * 60 * 1000, // 1 gün
-   });
-    res.json({ message:'Login successful', token, user:uobj });
+
+
+
+
+app.post('/api/logout', (req, res) => {
+  try {
+    res.clearCookie('token', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'none'
+    });
+    res.json({ message: 'Logout successful' });
   } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ message:'Server error during login' });
+    console.error('Logout error:', err);
+    res.status(500).json({ message: 'Server error during logout' });
   }
 });
 
@@ -868,69 +985,9 @@ app.post('/api/login', async (req, res) => {
 // });
 //Paypal Payment
 // server.cjs içində (əvvəlcə require/axios və dotenv.config() olmalı)
-app.post('/api/paypal/create-order', async (req, res) => {
-  const { plan } = req.body;          // plan: 'pro' | 'ultimate'
-  const priceMap = { pro: '10.00', ultimate: '25.00' };
-  const amount = priceMap[plan];
-  if (!amount) return res.status(400).send('Invalid plan');
 
-  // 1) OAuth token al
-  const { data: { access_token } } = await axios({
-    url: `${process.env.PAYPAL_API_BASE}/v1/oauth2/token`,
-    method: 'post',
-    auth: { username: process.env.PAYPAL_CLIENT_ID, password: process.env.PAYPAL_SECRET },
-    params: { grant_type: 'client_credentials' }
-  });
 
-  // 2) Order yarat
-  const { data: order } = await axios({
-    url: `${process.env.PAYPAL_API_BASE}/v2/checkout/orders`,
-    method: 'post',
-    headers: { Authorization: `Bearer ${access_token}` },
-    data: {
-      intent: 'CAPTURE',
-      purchase_units: [{ amount: { currency_code: 'USD', value: amount } }],
-      application_context: {
-        brand_name: 'DbAutoScripting',
-        user_action: 'PAY_NOW',
-      }
-    }
-  });
 
-  res.json({ orderID: order.id });
-});
-app.post('/api/paypal/capture-order', async (req, res) => {
-  const { orderID, plan, userId } = req.body;
-  if (!orderID || !plan || !userId) return res.status(400).end();
-
-  // 1) Aynı token yukle
-  const { data: { access_token } } = await axios({
-    url: `${process.env.PAYPAL_API_BASE}/v1/oauth2/token`,
-    method: 'post',
-    auth: { username: process.env.PAYPAL_CLIENT_ID, password: process.env.PAYPAL_SECRET },
-    params: { grant_type: 'client_credentials' }
-  });
-
-  // 2) Ödənişi təsdiq et
-  const { data: capture } = await axios({
-    url: `${process.env.PAYPAL_API_BASE}/v2/checkout/orders/${orderID}/capture`,
-    method: 'post',
-    headers: { Authorization: `Bearer ${access_token}` }
-  });
-
-  if (capture.status === 'COMPLETED') {
-    // 3) MongoDB-də istifadəçi planını yenilə
-    await User.findByIdAndUpdate(userId, { subscriptionPlan: plan });
-    return res.json({ success: true, details: capture });
-  } else {
-    return res.status(500).json({ success: false, error: 'Capture failed' });
-  }
-});
-
-const WEBSOCKET_PORT = process.env.WEBSOCKET_PORT || 5000;
-
-const wss = new WebSocket.Server({ port: WEBSOCKET_PORT });
-console.log(`✅ WebSocket server running on ws://localhost:${WEBSOCKET_PORT}${process.env.VITE_WS_BASE_PATH}`);
 
 wss.on('connection', (ws) => {
   ws.on('message', (message) => {
@@ -1170,7 +1227,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
     console.log(`👥 [${clientId}] Pong received`);
   });
 });
-// server.cjs (express-ws konfiqurasiyasından sonra)
+// WebSocket server setup for portfolio updates
 app.ws('/ws/portfolio-updates', (ws, req) => {
   const clientId = `portfolio_${Date.now()}`;
   console.log(`📋 [${clientId}] Client subscribed to portfolio-updates`);
@@ -1197,13 +1254,13 @@ app.ws('/ws/portfolio-updates', (ws, req) => {
     }
   }, 60000); // Increase to 60 seconds
 
-  // Nümunə: maqəzaları broadcast etmək üçün:
+  // Handle incoming messages
   ws.on('message', msg => {
     try {
       const message = JSON.parse(msg.toString());
       console.log(`📋 [${clientId}] Received message:`, message.type);
       
-      // Gələn portfolio yenilənməsini bütün digər client-lərə yolla
+      // Broadcast to all other clients
       wsInstance.getWss().clients.forEach(client => {
         if (client !== ws && client.readyState === 1) {
           client.send(msg);
@@ -1229,35 +1286,33 @@ app.ws('/ws/portfolio-updates', (ws, req) => {
   });
 });
 
-const distPath = path.join(__dirname, "dist");
-app.use(express.static(distPath));
+// Serve static files in production
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(__dirname, "dist");
+  app.use(express.static(distPath));
 
-// SPA üçün fallback: bütün GET istəkləri index.html-ə yönlənsin
-app.get(/^\/(?!api|ws).*/, (req, res) => {
-  res.sendFile(path.join(distPath, "index.html"));
-});
+  // SPA fallback: all GET requests not starting with /api or /ws go to index.html
+  app.get(/^\/(?!api|ws).*/, (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
 
-//
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ message:'Internal Server Error' });
+  console.error('❌ Unhandled error:', err);
+  res.status(500).json({ 
+    message: 'Internal Server Error',
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
 });
 
-// if (process.env.NODE_ENV === 'production') {
-//   const dist = path.join(__dirname, 'dist');
-//   app.use(express.static(dist));
-//   app.get('*', (req, res) => {
-//     res.sendFile(path.join(dist, 'index.html'));
-//   });
-// }
 
-// Start
+
+// Start server
 app.listen(PORT, '0.0.0.0', () => {
-   console.log(`✅ Server running on port ${PORT} (env: ${process.env.NODE_ENV})`);
- });
-
-
-// Axios konfiqurasiyası
-
-
+  console.log(`🚀 Server started successfully!`);
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 API Base URL: http://localhost:${PORT}/api`);
+  console.log(`🌍 CORS Origins: https://startup-1-j563.onrender.com, http://localhost:5173, http://localhost:3000`);
+});
