@@ -10,7 +10,8 @@ import { MainPage } from './pages/MainPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 import React, { useEffect } from 'react';
-import { checkAuth } from './utils/auth';
+import api from './utils/api';
+import { Navigate } from 'react-router-dom';
 
 const routerOptions = {
   future: {
@@ -19,9 +20,14 @@ const routerOptions = {
   },
 };
 
-function App() {
-  useEffect(() => {
-    checkAuth(); // Sessiyanı yoxla
+useEffect(() => {
+    (async () => {
+      try {
+        await api.get('/api/users/me');
+      } catch {
+        window.location.href = '/login';
+      }
+    })();
   }, []);
 
   return (
@@ -32,7 +38,8 @@ function App() {
         <PortfolioProvider>
           <BrowserRouter {...routerOptions}>
             <Routes>
-              <Route path="/" element={<AuthPage />} />
+              <Route path="/" element={<Navigate to="/login" replace />} />
+              <Route path="/login" element={<AuthPage />} />
               <Route path="/verify" element={<VerificationPage />} />
               <Route path="/main" element={<MainPage />} />
               <Route path="/workspace" element={<WorkspacePage />} />
