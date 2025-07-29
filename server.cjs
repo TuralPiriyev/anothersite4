@@ -989,55 +989,71 @@ app.post('/api/logout', (req, res) => {
 
 
 
-wss.on('connection', (ws) => {
+// WebSocket server setup for collaboration
+const workspaces = {};
+
+// Use express-ws for WebSocket connections instead of separate server
+app.ws('/ws/collaboration', (ws, req) => {
+  console.log('🔌 New WebSocket connection established for collaboration');
+  
   ws.on('message', (message) => {
-    const { type, workspaceId, payload } = JSON.parse(message);
+    try {
+      const { type, workspaceId, payload } = JSON.parse(message);
+      console.log('📨 Received WebSocket message:', { type, workspaceId });
 
-    if (!workspaces[workspaceId]) {
-      workspaces[workspaceId] = { clients: new Set(), document: '', cursors: {} };
-    }
+      if (!workspaces[workspaceId]) {
+        workspaces[workspaceId] = { clients: new Set(), document: '', cursors: {} };
+      }
 
-    const workspace = workspaces[workspaceId];
+      const workspace = workspaces[workspaceId];
 
-    switch (type) {
-      case 'join':
-        workspace.clients.add(ws);
-        ws.send(
-          JSON.stringify({
-            type: 'init',
-            payload: { document: workspace.document, cursors: workspace.cursors },
-          })
-        );
-        break;
+      switch (type) {
+        case 'join':
+          workspace.clients.add(ws);
+          ws.send(
+            JSON.stringify({
+              type: 'init',
+              payload: { document: workspace.document, cursors: workspace.cursors },
+            })
+          );
+          break;
 
-      case 'leave':
-        workspace.clients.delete(ws);
-        break;
+        case 'leave':
+          workspace.clients.delete(ws);
+          break;
 
-      case 'text-change':
-        workspace.document = payload.text;
-        workspace.clients.forEach((client) => {
-          if (client !== ws) {
-            client.send(JSON.stringify({ type: 'text-change', payload }));
-          }
-        });
-        break;
+        case 'text-change':
+          workspace.document = payload.text;
+          workspace.clients.forEach((client) => {
+            if (client !== ws) {
+              client.send(JSON.stringify({ type: 'text-change', payload }));
+            }
+          });
+          break;
 
-      case 'cursor-update':
-        workspace.cursors[payload.userId] = payload.position;
-        workspace.clients.forEach((client) => {
-          if (client !== ws) {
-            client.send(JSON.stringify({ type: 'cursor-update', payload }));
-          }
-        });
-        break;
+        case 'cursor-update':
+          workspace.cursors[payload.userId] = payload.position;
+          workspace.clients.forEach((client) => {
+            if (client !== ws) {
+              client.send(JSON.stringify({ type: 'cursor-update', payload }));
+            }
+          });
+          break;
+      }
+    } catch (error) {
+      console.error('❌ WebSocket error:', error);
     }
   });
 
   ws.on('close', () => {
+    console.log('🔌 WebSocket connection closed');
     Object.values(workspaces).forEach((workspace) => {
       workspace.clients.delete(ws);
     });
+  });
+  
+  ws.on('error', (error) => {
+    console.error('❌ WebSocket error:', error);
   });
 });
 
