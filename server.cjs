@@ -47,8 +47,8 @@ const wsInstance = expressWs(app);
 
 app.use(
   cors({
-    origin: 'https://startup-1-j563.onrender.com', // Frontend URL
-    credentials: true, // Cookie və ya sessiya məlumatlarını ötürmək üçün
+    origin: process.env.FRONTEND_ORIGIN, // .env faylından frontend URL-i
+    credentials: true, // Cookie və sessiya məlumatlarını ötürmək üçün
   })
 );
 
@@ -294,7 +294,7 @@ cron.schedule('0 0 * * *', async () => {
       from: `"SizinSite" <${process.env.SMTP_USER}>`,
       to: u.email,
       subject: 'Your plan has expired',
-      text: `Salam ${u.fullName || u.username},\nSizin ${u.subscriptionPlan.toUpperCase()} planınızın müddəti bitdi. Siz Free planına keçdiniz.`
+      text: `Salam ${u.fullName || u.username},\nSizin ${u.subscriptionPlan.toUppercase()} planınızın müddəti bitdi. Siz Free planına keçdiniz.`
     });
   }
 });
@@ -927,8 +927,10 @@ app.post('/api/paypal/capture-order', async (req, res) => {
   }
 });
 
-const wss = new WebSocket.Server({ port: 8080 });
-const workspaces = {}; // Workspace-lərin vəziyyətini və istifadəçiləri saxlamaq üçün obyekt
+const WEBSOCKET_PORT = process.env.WEBSOCKET_PORT || 5000;
+
+const wss = new WebSocket.Server({ port: WEBSOCKET_PORT });
+console.log(`✅ WebSocket server running on ws://localhost:${WEBSOCKET_PORT}${process.env.VITE_WS_BASE_PATH}`);
 
 wss.on('connection', (ws) => {
   ws.on('message', (message) => {
@@ -1257,11 +1259,5 @@ app.listen(PORT, '0.0.0.0', () => {
 
 
 // Axios konfiqurasiyası
-import axios from 'axios';
 
-const api = axios.create({
-  baseURL: 'https://startup-1-j563.onrender.com/api', // Backend API URL
-  withCredentials: true, // Sessiya məlumatlarını ötürmək üçün
-});
 
-export default api;
