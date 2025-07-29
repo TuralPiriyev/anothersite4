@@ -29,7 +29,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.get('/api/users/me');
+      const response = await api.get('/users/me');
       setUserSettings({
         username: response.data.username || 'N/A',
         email: response.data.email || 'N/A',

@@ -300,7 +300,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
 
     try {
       // Validate username against real database
-      const response = await api.post('/api/users/validate', { username: inviteUsername });
+      const response = await api.post('/users/validate', { username: inviteUsername });
       
       if (!response.data.exists) {
         setInviteError('User not found in our database.');
@@ -336,7 +336,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
       }
 
       // Save to real MongoDB
-      const invitationResponse = await api.post('/api/invitations', {
+      const invitationResponse = await api.post('/invitations', {
         workspaceId: currentSchema.id,
         inviterUsername: 'current_user',
         inviteeUsername: inviteUsername,
@@ -379,7 +379,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
 
     try {
       // Validate join code with real database
-      const response = await api.post('/api/invitations/validate', { joinCode: joinCode.toUpperCase() });
+      const response = await api.post('/invitations/validate', { joinCode: joinCode.toUpperCase() });
       
       if (!response.data.valid) {
         setJoinError(response.data.error || 'Invalid or expired code.');
@@ -390,10 +390,10 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
       const invitation = response.data.invitation;
       
       // Update invitation status in database
-      await api.put(`/api/invitations/${invitation.id}`, { status: 'accepted' });
+      await api.put(`/invitations/${invitation.id}`, { status: 'accepted' });
 
       // Add member to database
-      const memberResponse = await api.post('/api/members', {
+      const memberResponse = await api.post('/members', {
         workspaceId: invitation.workspaceId,
         id: crypto.randomUUID(),
         username: invitation.inviteeUsername,

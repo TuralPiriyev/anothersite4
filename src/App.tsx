@@ -27,7 +27,7 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
-        await api.get('/api/users/me');
+        await api.get('/users/me');
       } catch {
         window.location.href = '/login';
       }

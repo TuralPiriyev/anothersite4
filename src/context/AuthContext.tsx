@@ -60,7 +60,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       try {
         const token = localStorage.getItem('token');
         if (token) {
-          const response = await api.get('/api/auth/me');
+          const response = await api.get('/auth/me');
           if (response.data.user) {
             const userData = {
               ...response.data.user,
@@ -85,7 +85,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       setIsLoading(true);
-      const response = await api.post('/api/auth/login', { email, password });
+      const response = await api.post('/auth/login', { email, password });
       
       if (response.data.token) {
         localStorage.setItem('token', response.data.token);
@@ -100,7 +100,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setUser(userData);
         
         // Update user online status
-        await api.post('/api/users/online', { userId: userData.id });
+        await api.post('/users/online', { userId: userData.id });
         
         return true;
       }
@@ -116,7 +116,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const register = async (username: string, email: string, password: string): Promise<boolean> => {
     try {
       setIsLoading(true);
-      const response = await api.post('/api/auth/register', {
+      const response = await api.post('/auth/register', {
         username,
         email,
         password
@@ -148,7 +148,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       if (user) {
         // Update user offline status
-        await api.post('/api/users/offline', { userId: user.id });
+        await api.post('/users/offline', { userId: user.id });
       }
     } catch (error) {
       console.error('Logout error:', error);

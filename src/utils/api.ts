@@ -1,7 +1,9 @@
 // src/utils/api.ts
 import axios from 'axios';
 
-axios.defaults.baseURL = (import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:5000') + '/api';
+// API base URL konfiqurasiyası
+const baseURL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:5000/api';
+axios.defaults.baseURL = baseURL;
 axios.defaults.withCredentials = true;
 
 // Log API configuration in development
