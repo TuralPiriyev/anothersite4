@@ -3,10 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
-   "dev:server": "nodemon server.cjs",
-  "start": "concurrently \"node server.cjs\" \"node websocket-server.cjs\"",
+    "scripts": {
+    "dev:client": "vite",
+    "dev:server": "nodemon server.cjs",
+    "dev:websocket": "node websocket-server.cjs",
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\" \"npm run dev:websocket\"",
+    "start": "concurrently \"node server.cjs\" \"node websocket-server.cjs\"",
     "build": "vite build",
     "preview": "vite preview"
   },
