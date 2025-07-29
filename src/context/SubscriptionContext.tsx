@@ -87,7 +87,7 @@ export const PLAN_DETAILS = {
   },
   pro: {
     title: 'Pro',
-    price: '$19',
+    price: '$9.99',
     description: 'Ideal for professional developers and teams',
     features: [
       'Up to 20 tables',
@@ -103,7 +103,7 @@ export const PLAN_DETAILS = {
   },
   ultimate: {
     title: 'Ultimate',
-    price: '$49',
+    price: '$19.99',
     description: 'For enterprise teams and large-scale projects',
     features: [
       'Unlimited tables',
@@ -153,21 +153,19 @@ export const SubscriptionProvider: React.FC<SubscriptionProviderProps> = ({ chil
 
   const planLimits = PLAN_LIMITS[currentPlan];
 
+useEffect(() => {
   (async () => {
-      try {
-        // Yeni endpoint: subscription status
-        const { data } = await api.get('/subscription/status');
-        // data.plan içində gələn plan ('free'|'pro'|'ultimate')
-        setCurrentPlan(data.plan as SubscriptionPlan);
-        // data.expiresAt içində gələn tarix
-        setExpiresAt(data.expiresAt ? new Date(data.expiresAt) : null);
-      } catch (err) {
-        console.error('Failed to fetch subscription:', err);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    try {
+      const { data } = await api.get('/subscription/status');
+      setCurrentPlan(data.plan.toLowerCase());
+      setExpiresAt(data.expiresAt ? new Date(data.expiresAt) : null);
+    } catch (err) {
+      console.error('Failed to fetch subscription:', err);
+    } finally {
+      setLoading(false);
+    }
+  })();
+}, []);
 
   const changePlan = (plan: SubscriptionPlan) => {
     setCurrentPlan(plan);
