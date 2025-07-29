@@ -2,9 +2,12 @@
 import { WorkspaceInvitation, WorkspaceMember } from '../context/DatabaseContext';
 
 class MongoService {
-  private baseUrl = (import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:5000') + '/api';
+  private baseUrl: string;
 
   constructor() {
+    const baseURL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:5000/api';
+    this.baseUrl = baseURL;
+    
     if (import.meta.env.DEV) {
       console.log('🔧 MongoDB Service Configuration:');
       console.log(`📡 API Base URL: ${this.baseUrl}`);
