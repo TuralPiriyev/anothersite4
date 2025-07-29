@@ -58,7 +58,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {
-        const token = localStorage.getItem('authToken');
+        const token = localStorage.getItem('token');
         if (token) {
           const response = await api.get('/api/auth/me');
           if (response.data.user) {
@@ -73,7 +73,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
       } catch (error) {
         console.error('Auth check failed:', error);
-        localStorage.removeItem('authToken');
+        localStorage.removeItem('token');
       } finally {
         setIsLoading(false);
       }
@@ -88,7 +88,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await api.post('/api/auth/login', { email, password });
       
       if (response.data.token) {
-        localStorage.setItem('authToken', response.data.token);
+        localStorage.setItem('token', response.data.token);
         
         const userData = {
           ...response.data.user,
@@ -123,7 +123,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
       
       if (response.data.token) {
-        localStorage.setItem('authToken', response.data.token);
+        localStorage.setItem('token', response.data.token);
         
         const userData = {
           ...response.data.user,
@@ -153,7 +153,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      localStorage.removeItem('authToken');
+      localStorage.removeItem('token');
       setUser(null);
     }
   };
