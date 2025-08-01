@@ -36,7 +36,11 @@ axios.interceptors.request.use(
 axios.interceptors.response.use(
   response => response,
   error => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const url = error.config?.url || '';
+
+    // Yalnız auth əməliyyatlarında redirect et
+    if (status === 401 && (url.includes('/auth/') || url.includes('/login') || url.includes('/register'))) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       if (window.location.pathname !== '/login') {
