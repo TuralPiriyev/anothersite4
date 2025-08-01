@@ -1,26 +1,22 @@
 // src/utils/api.ts
 import axios from 'axios';
 
-// Əvvəlcə .env-dən gələn URL-i alır, sondakı slash-i silir
+// Load base URL from env or use current origin + /api
 const envUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '');
-// Fallback: cari səhifənin origin-i + /api
-const originUrl =
-  typeof window !== 'undefined'
-    ? window.location.origin.replace(/\/$/, '')
-    : '';
-
-// Axios baza URL-i
+const originUrl = typeof window !== 'undefined'
+  ? window.location.origin.replace(/\/$/, '')
+  : '';
 axios.defaults.baseURL = envUrl || `${originUrl}/api`;
 axios.defaults.withCredentials = true;
 
-// Development zamanı konfiqurasiyanı logla
+// Log configuration in development
 if (import.meta.env.DEV) {
   console.log('🔧 API Configuration:');
   console.log(`📡 Base URL: ${axios.defaults.baseURL}`);
   console.log(`🍪 With Credentials: ${axios.defaults.withCredentials}`);
 }
 
-// Request interceptor – Authorization header əlavə et
+// Attach token on each request
 axios.interceptors.request.use(
   config => {
     const token = localStorage.getItem('token');
@@ -32,23 +28,10 @@ axios.interceptors.request.use(
   error => Promise.reject(error)
 );
 
-// Response interceptor – 401 xətasını idarə et
+// Remove automatic redirect on 401; let components handle it
 axios.interceptors.response.use(
   response => response,
-  error => {
-    const status = error.response?.status;
-    const url = error.config?.url || '';
-
-    // Yalnız auth əməliyyatlarında redirect et
-    if (status === 401 && (url.includes('/auth/') || url.includes('/login') || url.includes('/register'))) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
-    }
-    return Promise.reject(error);
-  }
+  error => Promise.reject(error)
 );
 
 export default axios;
