@@ -154,13 +154,18 @@ export const SubscriptionProvider: React.FC<SubscriptionProviderProps> = ({ chil
   const planLimits = PLAN_LIMITS[currentPlan];
 
  useEffect(() => {
+    // Only fetch subscription on protected routes
+    if (window.location.pathname === '/login' || window.location.pathname === '/register') {
+      setLoading(false);
+      return;
+    }
+
     (async () => {
       try {
         const { data } = await api.get('/subscription/status');
         setCurrentPlan(data.plan.toLowerCase() as SubscriptionPlan);
         setExpiresAt(data.expiresAt ? new Date(data.expiresAt) : null);
       } catch (err: any) {
-        // Əgər istifadəçi avtorizasiya olunmayıbsa, login səhifəsinə yönləndir
         if (axios.isAxiosError(err) && err.response?.status === 401) {
           window.location.href = '/login';
         } else {
