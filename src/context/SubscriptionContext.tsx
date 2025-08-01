@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../utils/api';
-
+import axios from 'axios';
 // Subscription plan types
 export type SubscriptionPlan = 'free' | 'pro' | 'ultimate';
 
