@@ -19,12 +19,11 @@ const WebSocket = require('ws');
 dotenv.config();
 
 // Log server configuration
-console.log('🔧 Server Configuration:');
-console.log(📡 Port: ${process.env.SERVER_PORT || 5000});
-console.log(🌐 Environment: ${process.env.NODE_ENV || 'development'});
-console.log(🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'});
-console.log(📧 SMTP: ${process.env.SMTP_HOST || 'Not configured'});
-console.log(💳 PayPal: ${process.env.PAYPAL_CLIENT_ID ? 'Configured' : 'Not configured'});
+ console.log(`📡 Port: ${process.env.SERVER_PORT || 5000}`);
+ console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+ console.log(`🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'}`);
+ console.log(`📧 SMTP: ${process.env.SMTP_HOST || 'Not configured'}`);
+ console.log(`💳 PayPal: ${process.env.PAYPAL_CLIENT_ID ? 'Configured' : 'Not configured'}`);
 
 // Models & middleware
 const User            = require('./src/models/User.cjs');
