@@ -1,51 +1,44 @@
 // src/App.tsx
-import React, { useEffect } from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import api from './utils/api';
 
 import { AuthProvider } from './context/AuthContext';
+import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import { PortfolioProvider } from './context/PortfolioContext';
-import { SubscriptionProvider } from './context/SubscriptionContext';
 
 import UpgradeModal from './components/subscription/UpgradeModal';
-import { AuthPage } from './pages/AuthPage';
-import { VerificationPage } from './components/auth/VerificationPage';
-import { MainPage } from './pages/MainPage';
-import { WorkspacePage } from './pages/WorkspacePage';
+import { ProtectedRoute } from './components/ProtectedRoute';
+
+import AuthPage from './pages/AuthPage';
+import VerificationPage from './components/auth/VerificationPage';
+import MainPage from './pages/MainPage';
+import WorkspacePage from './pages/WorkspacePage';
 
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 
-const routerOptions = {
-  future: {
-    v7_startTransition: true,
-    v7_relativeSplatPath: true,
-  },
-};
-
 function App() {
-  // Sessiyanı yoxlayırıq; auth uğursuz olarsa, /login-ə yönləndir
-  useEffect(() => {
-    (async () => {
-      try {
-        await api.get('/users/me');
-      } catch {
-        window.location.href = '/login';
-      }
-    })();
-  }, []);
-
   return (
     <AuthProvider>
-      <PayPalScriptProvider /* options={{ 'client-id': process.env.PAYPAL_CLIENT_ID }} */>
+      <PayPalScriptProvider>
         <SubscriptionProvider>
           <PortfolioProvider>
-            <BrowserRouter {...routerOptions}>
+            <BrowserRouter>
               <Routes>
-                <Route path="/" element={<Navigate to="/login" replace />} />
+                {/* Giriş nöqtəsi */}
+                <Route path="/" element={<Navigate to="/main" replace />} />
+
+                {/* Açıq routelar */}
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/verify" element={<VerificationPage />} />
-                <Route path="/main" element={<MainPage />} />
-                <Route path="/workspace" element={<WorkspacePage />} />
+
+                {/* Qorunan routelar */}
+                <Route element={<ProtectedRoute />}>
+                  <Route path="/main" element={<MainPage />} />
+                  <Route path="/workspace/:id" element={<WorkspacePage />} />
+                </Route>
+
+                {/* 404 */}
+                <Route path="*" element={<Navigate to="/login" replace />} />
               </Routes>
               <UpgradeModal />
             </BrowserRouter>
