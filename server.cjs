@@ -47,10 +47,21 @@ const wsInstance = expressWs(app);
 
 app.use(
   cors({
-    origin: ['https://startup-1-j563.onrender.com', 'http://localhost:5173', 'http://localhost:3000'],
-    credentials: true, // Cookie və sessiya məlumatlarını ötürmək üçün
+    origin: [
+      'https://startup-1-j563.onrender.com',
+      'http://localhost:5173',
+      'http://localhost:3000'
+    ],
+    credentials: true,
+    methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+    allowedHeaders: ['Content-Type','Authorization'],
+    preflightContinue: false,    // cors middleware özü cavab versin
+    optionsSuccessStatus: 204    // legacy browser üçün
   })
 );
+// Həmçinin bütün OPTIONS-ları xüsusi olaraq icazə et:
+app.options('*', cors());
+
 
 app.use(cookieParser());
 
