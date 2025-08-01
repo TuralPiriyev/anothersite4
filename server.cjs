@@ -20,11 +20,11 @@ dotenv.config();
 
 // Log server configuration
 console.log('🔧 Server Configuration:');
-console.log(`📡 Port: ${process.env.SERVER_PORT || 5000}`);
-console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-console.log(`🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'}`);
-console.log(`📧 SMTP: ${process.env.SMTP_HOST || 'Not configured'}`);
-console.log(`💳 PayPal: ${process.env.PAYPAL_CLIENT_ID ? 'Configured' : 'Not configured'}`);
+console.log(📡 Port: ${process.env.SERVER_PORT || 5000});
+console.log(🌐 Environment: ${process.env.NODE_ENV || 'development'});
+console.log(🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'});
+console.log(📧 SMTP: ${process.env.SMTP_HOST || 'Not configured'});
+console.log(💳 PayPal: ${process.env.PAYPAL_CLIENT_ID ? 'Configured' : 'Not configured'});
 
 // Models & middleware
 const User            = require('./src/models/User.cjs');
@@ -83,7 +83,7 @@ if (MONGO_URL) {
 }
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
@@ -93,10 +93,10 @@ app.get('/health', (req, res) => {
 });
 
 // Portfolio routes (protected)
-app.use('/portfolios', authenticate, portfolioRoutes);
+app.use('/api/portfolios', authenticate, portfolioRoutes);
 
 // Database routes (protected)
-app.post('/databases/check', authenticate, async (req, res) => {
+app.post('/api/databases/check', authenticate, async (req, res) => {
   try {
     const { databaseName } = req.body;
     
@@ -117,7 +117,7 @@ app.post('/databases/check', authenticate, async (req, res) => {
   }
 });
 
-app.post('/databases', authenticate, async (req, res) => {
+app.post('/api/databases', authenticate, async (req, res) => {
   try {
     const { databaseName, schemaData } = req.body;
     
@@ -158,7 +158,7 @@ app.post('/databases', authenticate, async (req, res) => {
 // mövcud require-lərin altında
 // WorkspaceModel yoxdusa, biz Member modelindən istifadə edib,
 // üzvlüyü olan workspaces ID-lərini qaytara bilərik.
-app.get('/workspaces', authenticate, async (req, res) => {
+app.get('/api/workspaces', authenticate, async (req, res) => {
   try {
     const username = req.query.username;
     if (!username) return res.status(400).json({ error: 'username is required' });
@@ -171,7 +171,7 @@ app.get('/workspaces', authenticate, async (req, res) => {
 });
 
 
-app.get('/users/me', authenticate, async (req, res) => {
+app.get('/api/users/me', authenticate, async (req, res) => {
   try {
     // authenticate middleware req.userId qoyur
     const user = await User.findById(req.userId, 'subscriptionPlan expiresAt fullName email username');
@@ -183,7 +183,7 @@ app.get('/users/me', authenticate, async (req, res) => {
   }
 });
 
-app.get('/subscription/status', authenticate, async (req, res) => {
+app.get('/api/subscription/status', authenticate, async (req, res) => {
   try {
     const user = await User.findById(req.userId, 'subscriptionPlan expiresAt');
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -203,7 +203,7 @@ app.get('/subscription/status', authenticate, async (req, res) => {
   }
 });
 
-app.get('/auth/me', authenticate, async (req, res) => {
+app.get('/api/auth/me', authenticate, async (req, res) => {
   try {
     const user = await User.findById(req.userId, 'fullName email username subscriptionPlan expiresAt');
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -214,7 +214,7 @@ app.get('/auth/me', authenticate, async (req, res) => {
   }
 });
 
-app.post('/auth/login', async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
@@ -238,13 +238,13 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-app.post('/auth/register', async (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const conflict = await User.findOne({ $or: [{ email }, { username }] });
     if (conflict) {
       const field = conflict.email===email ? 'Email' : 'Username';
-      return res.status(400).json({ message: `${field} already registered` });
+      return res.status(400).json({ message: ${field} already registered });
     }
     const hashed = await bcrypt.hash(password, 10);
     const newUser = await new User({ username, email, password: hashed }).save();
@@ -258,7 +258,7 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
-app.post('/users/online', async (req, res) => {
+app.post('/api/users/online', async (req, res) => {
   try {
     const { userId } = req.body;
     await User.findByIdAndUpdate(userId, { isOnline: true, lastSeen: new Date() });
@@ -269,7 +269,7 @@ app.post('/users/online', async (req, res) => {
   }
 });
 
-app.post('/users/offline', async (req, res) => {
+app.post('/api/users/offline', async (req, res) => {
   try {
     const { userId } = req.body;
     await User.findByIdAndUpdate(userId, { isOnline: false, lastSeen: new Date() });
@@ -280,7 +280,7 @@ app.post('/users/offline', async (req, res) => {
   }
 });
 
-app.post('/users/validate', async (req, res) => {
+app.post('/api/users/validate', async (req, res) => {
   try {
     const { username } = req.body;
     const user = await User.findOne({ username });
@@ -291,7 +291,7 @@ app.post('/users/validate', async (req, res) => {
   }
 });
 
-app.post('/invitations', async (req, res) => {
+app.post('/api/invitations', async (req, res) => {
   try {
     const { workspaceId, inviterUsername, inviteeUsername, joinCode, expiresAt } = req.body;
     const invitation = await new Invitation({
@@ -309,7 +309,7 @@ app.post('/invitations', async (req, res) => {
   }
 });
 
-app.post('/invitations/validate', async (req, res) => {
+app.post('/api/invitations/validate', async (req, res) => {
   try {
     const { joinCode } = req.body;
     const invitation = await Invitation.findOne({ 
@@ -329,7 +329,7 @@ app.post('/invitations/validate', async (req, res) => {
   }
 });
 
-app.put('/invitations/:id', async (req, res) => {
+app.put('/api/invitations/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -341,7 +341,7 @@ app.put('/invitations/:id', async (req, res) => {
   }
 });
 
-app.post('/members', async (req, res) => {
+app.post('/api/members', async (req, res) => {
   try {
     const { workspaceId, id, username, role, joinedAt } = req.body;
     const member = await new Member({
@@ -367,7 +367,7 @@ if (!PAYPAL_CLIENT_ID || !PAYPAL_SECRET || !PAYPAL_API_BASE) {
 const PLAN_PRICES = { pro: '14.90', ultimate: '19.90' };
 
 // ─── Create Order ─────────────────────────────────────────────────────────────
-app.post('/paypal/create-order', async (req, res) => {
+app.post('/api/paypal/create-order', async (req, res) => {
   const { userId, plan } = req.body;
   if (!['pro','ultimate'].includes(plan)) {
     return res.status(400).json({ error: 'Invalid plan' });
@@ -376,7 +376,7 @@ app.post('/paypal/create-order', async (req, res) => {
   try {
     // 1) OAuth token
     const { data: { access_token } } = await axios({
-      url: `${PAYPAL_API_BASE}/v1/oauth2/token`,
+      url: ${PAYPAL_API_BASE}/v1/oauth2/token,
       method: 'post',
       auth: { username: PAYPAL_CLIENT_ID, password: PAYPAL_SECRET },
       params: { grant_type: 'client_credentials' }
@@ -384,20 +384,20 @@ app.post('/paypal/create-order', async (req, res) => {
 
     // 2) Create order
     const { data: order } = await axios({
-      url: `${PAYPAL_API_BASE}/v2/checkout/orders`,
+      url: ${PAYPAL_API_BASE}/v2/checkout/orders,
       method: 'post',
-      headers: { Authorization: `Bearer ${access_token}` },
+      headers: { Authorization: Bearer ${access_token} },
       data: {
         intent: 'CAPTURE',
         purchase_units: [{
           amount: { currency_code: 'USD', value: PLAN_PRICES[plan] },
-          description: `${plan.toUpperCase()} subscription`
+          description: ${plan.toUpperCase()} subscription
         }],
         application_context:
          {
           brand_name: 'SizinSite.com',
-          return_url:  `${FRONTEND_ORIGIN}/paypal/success`,
-          cancel_url:  `${FRONTEND_ORIGIN}/paypal/cancel`,
+          return_url:  ${FRONTEND_ORIGIN}/paypal/success,
+          cancel_url:  ${FRONTEND_ORIGIN}/paypal/cancel,
           user_action: 'PAY_NOW'
         }
       }
@@ -411,7 +411,7 @@ app.post('/paypal/create-order', async (req, res) => {
 });
 
 // ─── Capture Order ────────────────────────────────────────────────────────────
-app.post('/paypal/capture-order', async (req, res) => {
+app.post('/api/paypal/capture-order', async (req, res) => {
   const { orderID, userId, plan } = req.body;
   if (!orderID || !userId || !['pro','ultimate'].includes(plan)) {
     return res.status(400).json({ error: 'Missing parameters' });
@@ -420,7 +420,7 @@ app.post('/paypal/capture-order', async (req, res) => {
   try {
     // 1) OAuth token again
     const { data: { access_token } } = await axios({
-      url: `${PAYPAL_API_BASE}/v1/oauth2/token`,
+      url: ${PAYPAL_API_BASE}/v1/oauth2/token,
       method: 'post',
       auth: { username: PAYPAL_CLIENT_ID, password: PAYPAL_SECRET },
       params: { grant_type: 'client_credentials' }
@@ -428,9 +428,9 @@ app.post('/paypal/capture-order', async (req, res) => {
 
     // 2) Capture payment
     const { data: capture } = await axios({
-      url: `${PAYPAL_API_BASE}/v2/checkout/orders/${orderID}/capture`,
+      url: ${PAYPAL_API_BASE}/v2/checkout/orders/${orderID}/capture,
       method: 'post',
-      headers: { Authorization: `Bearer ${access_token}` }
+      headers: { Authorization: Bearer ${access_token} }
     });
 
     if (capture.status === 'COMPLETED') {
@@ -446,10 +446,10 @@ app.post('/paypal/capture-order', async (req, res) => {
 
       // Send confirmation email
       await transporter.sendMail({
-        from: `"SizinSite" <${process.env.SMTP_USER}>`,
+        from: "SizinSite" <${process.env.SMTP_USER}>,
         to: capture.payer.email_address,
-        subject: `${plan.toUpperCase()} plan activated`,
-        text: `Salam! Siz ${plan.toUpperCase()} planına keçdiniz. Planınız ${expiresAt.toISOString().slice(0,10)} tarixində bitəcək.`
+        subject: ${plan.toUpperCase()} plan activated,
+        text: Salam! Siz ${plan.toUpperCase()} planına keçdiniz. Planınız ${expiresAt.toISOString().slice(0,10)} tarixində bitəcək.
       });
 
       return res.json({ success: true, expiresAt });
@@ -478,10 +478,10 @@ cron.schedule('0 0 * * *', async () => {
     });
 
     await transporter.sendMail({
-      from: `"SizinSite" <${process.env.SMTP_USER}>`,
+      from: "SizinSite" <${process.env.SMTP_USER}>,
       to: u.email,
       subject: 'Your plan has expired',
-      text: `Salam ${u.fullName || u.username},\nSizin ${u.subscriptionPlan.toUppercase()} planınızın müddəti bitdi. Siz Free planına keçdiniz.`
+      text: Salam ${u.fullName || u.username},\nSizin ${u.subscriptionPlan.toUppercase()} planınızın müddəti bitdi. Siz Free planına keçdiniz.
     });
   }
 });
@@ -497,10 +497,10 @@ cron.schedule('0 0 * * *', async () => {
   for (let u of users) {
     await User.findByIdAndUpdate(u._id, { subscriptionPlan: 'free', expiresAt: null });
     await transporter.sendMail({
-      from: `"SizinSite" <${process.env.SMTP_USER}>`,
+      from: "SizinSite" <${process.env.SMTP_USER}>,
       to: u.email,
       subject: 'Plan müddəti bitdi',
-      text: `Salam ${u.fullName||u.username}, planınız bitdi və Free planına keçdiniz.`
+      text: Salam ${u.fullName||u.username}, planınız bitdi və Free planına keçdiniz.
     });
   }
 });
@@ -528,8 +528,8 @@ async function sendCode(email, code) {
     from: process.env.SMTP_USER,
     to: email,
     subject: 'Your verification code for DbAutoScripting',
-    text: `Your DbAutoScripting verification code is: ${code}`,
-    html: `
+    text: Your DbAutoScripting verification code is: ${code},
+    html: 
      <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -646,14 +646,14 @@ async function sendCode(email, code) {
   </table>
 </body>
 </html>
-    `
+    
   });
 }
 //Code Send method in team collabration
-// server.cjs üzərində, mövcud `/api/portfolios`–dən əvvəl:
+// server.cjs üzərində, mövcud /api/portfolios–dən əvvəl:
 
 // 1) İstifadəçi yoxlamaq üçün
-app.post('/users/validate', async (req, res) => {
+app.post('/api/users/validate', async (req, res) => {
   try {
     console.log('Validating username:', req.body);
     const { username } = req.body;
@@ -674,7 +674,7 @@ app.post('/users/validate', async (req, res) => {
 
 // 2) Invitation modelləri üçün
 //const Invitation = require('./src/models/Invitation.cjs');
-app.post('/invitations', authenticate, async (req, res) => {
+app.post('/api/invitations', authenticate, async (req, res) => {
   try {
     console.log('Creating invitation:', req.body);
     
@@ -733,7 +733,7 @@ app.post('/invitations', authenticate, async (req, res) => {
   }
 });
 
-app.get('/invitations', authenticate, async (req, res) => {
+app.get('/api/invitations', authenticate, async (req, res) => {
   try {
     const { workspaceId } = req.query;
     console.log('Fetching invitations for workspace:', workspaceId);
@@ -752,7 +752,7 @@ app.get('/invitations', authenticate, async (req, res) => {
 });
 
 // New endpoint: Validate join code
-app.post('/invitations/validate', authenticate, async (req, res) => {
+app.post('/api/invitations/validate', authenticate, async (req, res) => {
   try {
     const { joinCode } = req.body;
     console.log('Validating join code:', joinCode);
@@ -766,7 +766,7 @@ app.post('/invitations/validate', authenticate, async (req, res) => {
     
     // Find invitation by join code (case insensitive)
     const invitation = await Invitation.findOne({ 
-      joinCode: { $regex: new RegExp(`^${joinCode.toUpperCase()}$`, 'i') },
+      joinCode: { $regex: new RegExp(^${joinCode.toUpperCase()}$, 'i') },
       status: 'pending'
     });
     
@@ -814,7 +814,7 @@ app.post('/invitations/validate', authenticate, async (req, res) => {
 });
 
 // Update invitation status
-app.put('/invitations/:id', authenticate, async (req, res) => {
+app.put('/api/invitations/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -845,7 +845,7 @@ app.put('/invitations/:id', authenticate, async (req, res) => {
 
 // 3) WorkspaceMember modelləri üçün
 //const Member = require('./src/models/Member.cjs');
-app.post('/members', authenticate, async (req, res) => {
+app.post('/api/members', authenticate, async (req, res) => {
   try {
     console.log('Creating workspace member:', req.body);
     
@@ -897,7 +897,7 @@ app.post('/members', authenticate, async (req, res) => {
   }
 });
 
-app.get('/members', authenticate, async (req, res) => {
+app.get('/api/members', authenticate, async (req, res) => {
   try {
     const { workspaceId } = req.query;
     console.log('Fetching members for workspace:', workspaceId);
@@ -916,7 +916,7 @@ app.get('/members', authenticate, async (req, res) => {
 });
 
 // 4) Workspace güncəlləmək üçün
-app.put('/workspaces/:id', authenticate, async (req, res) => {
+app.put('/api/workspaces/:id', authenticate, async (req, res) => {
   try {
     console.log('Updating workspace:', req.params.id);
     // workspace modeliniz varsa:
@@ -934,29 +934,29 @@ app.put('/workspaces/:id', authenticate, async (req, res) => {
 
 //
 
-app.post('/contact', async (req, res) => {
+app.post('/api/contact', async (req, res) => {
   const { name, email, message } = req.body;
   if (!name || !email || !message) {
     return res.status(400).json({ error: 'All fields are required.' });
   }
   try {
     await transporter.sendMail({
-      from: `"${name}" <${email}>`,
+      from: "${name}" <${email}>,
       to: 'piriyevtural00@gmail.com',
-      subject: `New Contact Message from ${name}`,
-      text: `
+      subject: New Contact Message from ${name},
+      text: 
 Name: ${name}
 Email: ${email}
 
 Message:
 ${message}
-      `,
-      html: `
+      ,
+      html: 
         <h3>New Contact Form Message</h3>
         <p><strong>Name:</strong> ${name}</p>
         <p><strong>Email:</strong> ${email}</p>
         <p><strong>Message:</strong><br/>${message.replace(/\n/g,'<br/>')}</p>
-      `
+      
     });
     res.json({ success: true });
   } catch (err) {
@@ -973,7 +973,7 @@ ${message}
 
 
 
-app.post('/logout', (req, res) => {
+app.post('/api/logout', (req, res) => {
   try {
     res.clearCookie('token', {
       httpOnly: true,
@@ -1070,8 +1070,8 @@ app.ws('/ws/collaboration', (ws, req) => {
 
 app.ws('/ws/collaboration/:schemaId', (ws, req) => {
   const { schemaId } = req.params;
-  const clientId = `collab_${schemaId}_${Date.now()}`;
-  console.log(`👥 [${clientId}] Collaboration socket opened for schema: ${schemaId}`);
+  const clientId = collab_${schemaId}_${Date.now()};
+  console.log(👥 [${clientId}] Collaboration socket opened for schema: ${schemaId});
 
   // Send welcome message
   ws.send(JSON.stringify({
@@ -1087,11 +1087,11 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
       try {
         ws.ping();
       } catch (error) {
-        console.error(`👥 [${clientId}] Ping failed:`, error);
+        console.error(👥 [${clientId}] Ping failed:, error);
         clearInterval(heartbeat);
       }
     } else {
-      console.log(`👥 [${clientId}] WebSocket not ready, clearing heartbeat`);
+      console.log(👥 [${clientId}] WebSocket not ready, clearing heartbeat);
       clearInterval(heartbeat);
     }
   }, 60000); // Increase to 60 seconds
@@ -1099,7 +1099,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
   ws.on('message', msg => {
     try {
       const message = JSON.parse(msg.toString());
-      console.log(`👥 [${clientId}] Received message:`, message.type, message);
+      console.log(👥 [${clientId}] Received message:, message.type, message);
       
       // Enhanced message handling with proper validation and transformation
       let broadcastMessage = null;
@@ -1122,7 +1122,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
               clientId
             };
           } else {
-            console.warn(`👥 [${clientId}] Invalid cursor_update message structure:`, message);
+            console.warn(👥 [${clientId}] Invalid cursor_update message structure:, message);
           }
           break;
           
@@ -1186,7 +1186,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
           return; // Don't broadcast ping messages
           
         default:
-          console.log(`👥 [${clientId}] Unknown message type: ${message.type}`);
+          console.log(👥 [${clientId}] Unknown message type: ${message.type});
           broadcastMessage = {
             ...message,
             timestamp: new Date().toISOString(),
@@ -1206,21 +1206,21 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
               client.send(broadcastData);
               broadcastCount++;
             } catch (error) {
-              console.error(`👥 [${clientId}] Failed to broadcast to client:`, error);
+              console.error(👥 [${clientId}] Failed to broadcast to client:, error);
             }
           }
         });
         
-        console.log(`👥 [${clientId}] Broadcasted ${message.type} to ${broadcastCount} clients`);
+        console.log(👥 [${clientId}] Broadcasted ${message.type} to ${broadcastCount} clients);
       }
       
     } catch (error) {
-      console.error(`👥 [${clientId}] Error processing message:`, error);
+      console.error(👥 [${clientId}] Error processing message:, error);
     }
   });
 
   ws.on('close', (code, reason) => {
-    console.log(`👥 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason}`);
+    console.log(👥 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason});
     clearInterval(heartbeat);
     
     // Broadcast user_left if this was an unexpected disconnect
@@ -1238,7 +1238,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
           try {
             client.send(leaveMessage);
           } catch (error) {
-            console.error(`👥 Failed to broadcast leave message:`, error);
+            console.error(👥 Failed to broadcast leave message:, error);
           }
         }
       });
@@ -1246,18 +1246,18 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
   });
 
   ws.on('error', (error) => {
-    console.error(`👥 [${clientId}] Socket error:`, error);
+    console.error(👥 [${clientId}] Socket error:, error);
     clearInterval(heartbeat);
   });
 
   ws.on('pong', () => {
-    console.log(`👥 [${clientId}] Pong received`);
+    console.log(👥 [${clientId}] Pong received);
   });
 });
 // WebSocket server setup for portfolio updates
 app.ws('/ws/portfolio-updates', (ws, req) => {
-  const clientId = `portfolio_${Date.now()}`;
-  console.log(`📋 [${clientId}] Client subscribed to portfolio-updates`);
+  const clientId = portfolio_${Date.now()};
+  console.log(📋 [${clientId}] Client subscribed to portfolio-updates);
 
   // Send welcome message
   ws.send(JSON.stringify({
@@ -1272,11 +1272,11 @@ app.ws('/ws/portfolio-updates', (ws, req) => {
       try {
         ws.ping();
       } catch (error) {
-        console.error(`📋 [${clientId}] Ping failed:`, error);
+        console.error(📋 [${clientId}] Ping failed:, error);
         clearInterval(heartbeat);
       }
     } else {
-      console.log(`📋 [${clientId}] WebSocket not ready, clearing heartbeat`);
+      console.log(📋 [${clientId}] WebSocket not ready, clearing heartbeat);
       clearInterval(heartbeat);
     }
   }, 60000); // Increase to 60 seconds
@@ -1285,7 +1285,7 @@ app.ws('/ws/portfolio-updates', (ws, req) => {
   ws.on('message', msg => {
     try {
       const message = JSON.parse(msg.toString());
-      console.log(`📋 [${clientId}] Received message:`, message.type);
+      console.log(📋 [${clientId}] Received message:, message.type);
       
       // Broadcast to all other clients
       wsInstance.getWss().clients.forEach(client => {
@@ -1294,22 +1294,22 @@ app.ws('/ws/portfolio-updates', (ws, req) => {
         }
       });
     } catch (error) {
-      console.error(`📋 [${clientId}] Error processing message:`, error);
+      console.error(📋 [${clientId}] Error processing message:, error);
     }
   });
 
   ws.on('close', (code, reason) => {
-    console.log(`📋 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason}`);
+    console.log(📋 [${clientId}] Socket closed - Code: ${code}, Reason: ${reason});
     clearInterval(heartbeat);
   });
 
   ws.on('error', (error) => {
-    console.error(`📋 [${clientId}] Socket error:`, error);
+    console.error(📋 [${clientId}] Socket error:, error);
     clearInterval(heartbeat);
   });
 
   ws.on('pong', () => {
-    console.log(`📋 [${clientId}] Pong received`);
+    console.log(📋 [${clientId}] Pong received);
   });
 });
 
@@ -1337,9 +1337,9 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server started successfully!`);
-  console.log(`📡 Port: ${PORT}`);
-  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 API Base URL: http://localhost:${PORT}/api`);
-  console.log(`🌍 CORS Origins: https://startup-1-j563.onrender.com, http://localhost:5173, http://localhost:3000`);
+  console.log(🚀 Server started successfully!);
+  console.log(📡 Port: ${PORT});
+  console.log(🌐 Environment: ${process.env.NODE_ENV || 'development'});
+  console.log(🔗 API Base URL: http://localhost:${PORT}/api);
+  console.log(🌍 CORS Origins: https://startup-1-j563.onrender.com, http://localhost:5173, http://localhost:3000);
 });
