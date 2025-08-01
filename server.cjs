@@ -1337,7 +1337,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(🚀 Server started successfully!);
+  console.log(`🚀 Server started successfully!`);
   console.log(`📡 Port: ${process.env.SERVER_PORT || 5000}`);
   console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'}`);
