@@ -1,7 +1,7 @@
 // src/components/ProtectedRoute.tsx
 import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
-import { useSubscription } from '../contexts/SubscriptionContext';
+import { useSubscription } from '../context/SubscriptionContext';
 
 export const ProtectedRoute: React.FC = () => {
   const { loading } = useSubscription();
