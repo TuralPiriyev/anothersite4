@@ -35,7 +35,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode }> = ({ children 
   const loadPortfolios = useCallback(async () => {
     try {
       const headers = { 'Content-Type': 'application/json', ...getAuthHeader() };
-      const res = await axios.get<Portfolio[]>('/api/portfolios', { headers });
+      const res = await axios.get<Portfolio[]>('/portfolios', { headers });
       setPortfolios(res.data);
     } catch (err) {
       console.error('Portfolioları yükləmə xətası:', err);
@@ -47,7 +47,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode }> = ({ children 
     try {
       const headers = { 'Content-Type': 'application/json', ...getAuthHeader() };
       const res = await axios.post<Portfolio>(
-        '/api/portfolios',
+        '/portfolios',
         { name, scripts },
         { headers }
       );
@@ -64,7 +64,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode }> = ({ children 
   const deletePortfolio = useCallback(async (id: string) => {
     try {
       const headers = { 'Content-Type': 'application/json', ...getAuthHeader() };
-      await axios.delete(`/api/portfolios/${id}`, { headers });
+      await axios.delete(`/portfolios/${id}`, { headers });
       setPortfolios(prev => prev.filter(p => p._id !== id));
     } catch (err) {
       console.error('Portfolio silmə xətası:', err);
