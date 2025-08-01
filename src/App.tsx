@@ -3,7 +3,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
 import { AuthProvider } from './context/AuthContext';
-import { SubscriptionProvider } from './contexts/SubscriptionContext';
+import { SubscriptionProvider } from './context/SubscriptionContext';
 import { PortfolioProvider } from './context/PortfolioContext';
 
 import UpgradeModal from './components/subscription/UpgradeModal';
