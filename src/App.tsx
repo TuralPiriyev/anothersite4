@@ -34,6 +34,7 @@ function App() {
                 {/* Qorunan routelar */}
                 <Route element={<ProtectedRoute />}>
                   <Route path="/main" element={<MainPage />} />
+                  <Route path="/workspace" element={<WorkspacePage />} />
                   <Route path="/workspace/:id" element={<WorkspacePage />} />
                 </Route>
 
