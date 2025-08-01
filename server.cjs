@@ -83,7 +83,7 @@ if (MONGO_URL) {
 }
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
+app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
@@ -93,10 +93,10 @@ app.get('/api/health', (req, res) => {
 });
 
 // Portfolio routes (protected)
-app.use('/api/portfolios', authenticate, portfolioRoutes);
+app.use('/portfolios', authenticate, portfolioRoutes);
 
 // Database routes (protected)
-app.post('/api/databases/check', authenticate, async (req, res) => {
+app.post('/databases/check', authenticate, async (req, res) => {
   try {
     const { databaseName } = req.body;
     
@@ -117,7 +117,7 @@ app.post('/api/databases/check', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/databases', authenticate, async (req, res) => {
+app.post('/databases', authenticate, async (req, res) => {
   try {
     const { databaseName, schemaData } = req.body;
     
@@ -158,7 +158,7 @@ app.post('/api/databases', authenticate, async (req, res) => {
 // mövcud require-lərin altında
 // WorkspaceModel yoxdusa, biz Member modelindən istifadə edib,
 // üzvlüyü olan workspaces ID-lərini qaytara bilərik.
-app.get('/api/workspaces', authenticate, async (req, res) => {
+app.get('/workspaces', authenticate, async (req, res) => {
   try {
     const username = req.query.username;
     if (!username) return res.status(400).json({ error: 'username is required' });
@@ -171,7 +171,7 @@ app.get('/api/workspaces', authenticate, async (req, res) => {
 });
 
 
-app.get('/api/users/me', authenticate, async (req, res) => {
+app.get('/users/me', authenticate, async (req, res) => {
   try {
     // authenticate middleware req.userId qoyur
     const user = await User.findById(req.userId, 'subscriptionPlan expiresAt fullName email username');
@@ -183,7 +183,7 @@ app.get('/api/users/me', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/subscription/status', authenticate, async (req, res) => {
+app.get('/subscription/status', authenticate, async (req, res) => {
   try {
     const user = await User.findById(req.userId, 'subscriptionPlan expiresAt');
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -203,7 +203,7 @@ app.get('/api/subscription/status', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/auth/me', authenticate, async (req, res) => {
+app.get('/auth/me', authenticate, async (req, res) => {
   try {
     const user = await User.findById(req.userId, 'fullName email username subscriptionPlan expiresAt');
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -214,7 +214,7 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
@@ -238,7 +238,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/auth/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const conflict = await User.findOne({ $or: [{ email }, { username }] });
@@ -258,7 +258,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/users/online', async (req, res) => {
+app.post('/users/online', async (req, res) => {
   try {
     const { userId } = req.body;
     await User.findByIdAndUpdate(userId, { isOnline: true, lastSeen: new Date() });
@@ -269,7 +269,7 @@ app.post('/api/users/online', async (req, res) => {
   }
 });
 
-app.post('/api/users/offline', async (req, res) => {
+app.post('/users/offline', async (req, res) => {
   try {
     const { userId } = req.body;
     await User.findByIdAndUpdate(userId, { isOnline: false, lastSeen: new Date() });
@@ -280,7 +280,7 @@ app.post('/api/users/offline', async (req, res) => {
   }
 });
 
-app.post('/api/users/validate', async (req, res) => {
+app.post('/users/validate', async (req, res) => {
   try {
     const { username } = req.body;
     const user = await User.findOne({ username });
@@ -291,7 +291,7 @@ app.post('/api/users/validate', async (req, res) => {
   }
 });
 
-app.post('/api/invitations', async (req, res) => {
+app.post('/invitations', async (req, res) => {
   try {
     const { workspaceId, inviterUsername, inviteeUsername, joinCode, expiresAt } = req.body;
     const invitation = await new Invitation({
@@ -309,7 +309,7 @@ app.post('/api/invitations', async (req, res) => {
   }
 });
 
-app.post('/api/invitations/validate', async (req, res) => {
+app.post('/invitations/validate', async (req, res) => {
   try {
     const { joinCode } = req.body;
     const invitation = await Invitation.findOne({ 
@@ -329,7 +329,7 @@ app.post('/api/invitations/validate', async (req, res) => {
   }
 });
 
-app.put('/api/invitations/:id', async (req, res) => {
+app.put('/invitations/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -341,7 +341,7 @@ app.put('/api/invitations/:id', async (req, res) => {
   }
 });
 
-app.post('/api/members', async (req, res) => {
+app.post('/members', async (req, res) => {
   try {
     const { workspaceId, id, username, role, joinedAt } = req.body;
     const member = await new Member({
@@ -367,7 +367,7 @@ if (!PAYPAL_CLIENT_ID || !PAYPAL_SECRET || !PAYPAL_API_BASE) {
 const PLAN_PRICES = { pro: '14.90', ultimate: '19.90' };
 
 // ─── Create Order ─────────────────────────────────────────────────────────────
-app.post('/api/paypal/create-order', async (req, res) => {
+app.post('/paypal/create-order', async (req, res) => {
   const { userId, plan } = req.body;
   if (!['pro','ultimate'].includes(plan)) {
     return res.status(400).json({ error: 'Invalid plan' });
@@ -411,7 +411,7 @@ app.post('/api/paypal/create-order', async (req, res) => {
 });
 
 // ─── Capture Order ────────────────────────────────────────────────────────────
-app.post('/api/paypal/capture-order', async (req, res) => {
+app.post('/paypal/capture-order', async (req, res) => {
   const { orderID, userId, plan } = req.body;
   if (!orderID || !userId || !['pro','ultimate'].includes(plan)) {
     return res.status(400).json({ error: 'Missing parameters' });
@@ -653,7 +653,7 @@ async function sendCode(email, code) {
 // server.cjs üzərində, mövcud `/api/portfolios`–dən əvvəl:
 
 // 1) İstifadəçi yoxlamaq üçün
-app.post('/api/users/validate', async (req, res) => {
+app.post('/users/validate', async (req, res) => {
   try {
     console.log('Validating username:', req.body);
     const { username } = req.body;
@@ -674,7 +674,7 @@ app.post('/api/users/validate', async (req, res) => {
 
 // 2) Invitation modelləri üçün
 //const Invitation = require('./src/models/Invitation.cjs');
-app.post('/api/invitations', authenticate, async (req, res) => {
+app.post('/invitations', authenticate, async (req, res) => {
   try {
     console.log('Creating invitation:', req.body);
     
@@ -733,7 +733,7 @@ app.post('/api/invitations', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/invitations', authenticate, async (req, res) => {
+app.get('/invitations', authenticate, async (req, res) => {
   try {
     const { workspaceId } = req.query;
     console.log('Fetching invitations for workspace:', workspaceId);
@@ -752,7 +752,7 @@ app.get('/api/invitations', authenticate, async (req, res) => {
 });
 
 // New endpoint: Validate join code
-app.post('/api/invitations/validate', authenticate, async (req, res) => {
+app.post('/invitations/validate', authenticate, async (req, res) => {
   try {
     const { joinCode } = req.body;
     console.log('Validating join code:', joinCode);
@@ -814,7 +814,7 @@ app.post('/api/invitations/validate', authenticate, async (req, res) => {
 });
 
 // Update invitation status
-app.put('/api/invitations/:id', authenticate, async (req, res) => {
+app.put('/invitations/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -845,7 +845,7 @@ app.put('/api/invitations/:id', authenticate, async (req, res) => {
 
 // 3) WorkspaceMember modelləri üçün
 //const Member = require('./src/models/Member.cjs');
-app.post('/api/members', authenticate, async (req, res) => {
+app.post('/members', authenticate, async (req, res) => {
   try {
     console.log('Creating workspace member:', req.body);
     
@@ -897,7 +897,7 @@ app.post('/api/members', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/members', authenticate, async (req, res) => {
+app.get('/members', authenticate, async (req, res) => {
   try {
     const { workspaceId } = req.query;
     console.log('Fetching members for workspace:', workspaceId);
@@ -916,7 +916,7 @@ app.get('/api/members', authenticate, async (req, res) => {
 });
 
 // 4) Workspace güncəlləmək üçün
-app.put('/api/workspaces/:id', authenticate, async (req, res) => {
+app.put('/workspaces/:id', authenticate, async (req, res) => {
   try {
     console.log('Updating workspace:', req.params.id);
     // workspace modeliniz varsa:
@@ -934,7 +934,7 @@ app.put('/api/workspaces/:id', authenticate, async (req, res) => {
 
 //
 
-app.post('/api/contact', async (req, res) => {
+app.post('/contact', async (req, res) => {
   const { name, email, message } = req.body;
   if (!name || !email || !message) {
     return res.status(400).json({ error: 'All fields are required.' });
@@ -973,7 +973,7 @@ ${message}
 
 
 
-app.post('/api/logout', (req, res) => {
+app.post('/logout', (req, res) => {
   try {
     res.clearCookie('token', {
       httpOnly: true,
