@@ -9,10 +9,10 @@ import { PortfolioProvider } from './context/PortfolioContext';
 import UpgradeModal from './components/subscription/UpgradeModal';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
-import AuthPage from './pages/AuthPage';
-import VerificationPage from './components/auth/VerificationPage';
-import MainPage from './pages/MainPage';
-import WorkspacePage from './pages/WorkspacePage';
+import { AuthPage } from './pages/AuthPage';
+import { VerificationPage } from './components/auth/VerificationPage';
+import { MainPage } from './pages/MainPage';
+import { WorkspacePage } from './pages/WorkspacePage';
 
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 
