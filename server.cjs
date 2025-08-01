@@ -1338,8 +1338,9 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(🚀 Server started successfully!);
-  console.log(📡 Port: ${PORT});
-  console.log(🌐 Environment: ${process.env.NODE_ENV || 'development'});
-  console.log(🔗 API Base URL: http://localhost:${PORT}/api);
-  console.log(🌍 CORS Origins: https://startup-1-j563.onrender.com, http://localhost:5173, http://localhost:3000);
+  console.log(`📡 Port: ${process.env.SERVER_PORT || 5000}`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'}`);
+  console.log(`📧 SMTP: ${process.env.SMTP_HOST || 'Not configured'}`);
+  console.log(`💳 PayPal: ${process.env.PAYPAL_CLIENT_ID ? 'Configured' : 'Not configured'}`);
 });
