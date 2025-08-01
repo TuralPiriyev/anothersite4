@@ -119,6 +119,7 @@ export const PLAN_DETAILS = {
 };
 
 interface SubscriptionContextType {
+  loading: boolean;
   currentPlan: SubscriptionPlan;
   planLimits: PlanLimits;
   changePlan: (plan: SubscriptionPlan) => void;
@@ -192,6 +193,7 @@ useEffect(() => {
   };
 
   const value: SubscriptionContextType = {
+    loading,
     currentPlan,
     planLimits,
     changePlan,
