@@ -153,19 +153,24 @@ export const SubscriptionProvider: React.FC<SubscriptionProviderProps> = ({ chil
 
   const planLimits = PLAN_LIMITS[currentPlan];
 
-useEffect(() => {
-  (async () => {
-    try {
-      const { data } = await api.get('/subscription/status');
-      setCurrentPlan(data.plan.toLowerCase());
-      setExpiresAt(data.expiresAt ? new Date(data.expiresAt) : null);
-    } catch (err) {
-      console.error('Failed to fetch subscription:', err);
-    } finally {
-      setLoading(false);
-    }
-  })();
-}, []);
+ useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get('/subscription/status');
+        setCurrentPlan(data.plan.toLowerCase() as SubscriptionPlan);
+        setExpiresAt(data.expiresAt ? new Date(data.expiresAt) : null);
+      } catch (err: any) {
+        // Əgər istifadəçi avtorizasiya olunmayıbsa, login səhifəsinə yönləndir
+        if (axios.isAxiosError(err) && err.response?.status === 401) {
+          window.location.href = '/login';
+        } else {
+          console.error('Failed to fetch subscription:', err);
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   const changePlan = (plan: SubscriptionPlan) => {
     setCurrentPlan(plan);
