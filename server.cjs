@@ -60,7 +60,7 @@ app.use(
   })
 );
 // Həmçinin bütün OPTIONS-ları xüsusi olaraq icazə et:
-app.options('/*', cors());
+//app.options('/*', cors());
 
 
 app.use(cookieParser());
