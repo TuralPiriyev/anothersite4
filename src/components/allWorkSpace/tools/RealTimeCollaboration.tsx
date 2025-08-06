@@ -54,6 +54,15 @@ interface RealtimeEvent {
   data: any;
 }
 
+const generateRandomColor = (): string => {
+  const letters = '0123456789ABCDEF';
+  let color = '#';
+  for (let i = 0; i < 6; i++) {
+    color += letters[Math.floor(Math.random() * 16)];
+  }
+  return color;
+};
+
 const RealTimeCollaboration: React.FC = () => {
   const { currentPlan } = useSubscription();
   const { 
@@ -165,6 +174,20 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                 status: 'online' as const,
                 currentAction: 'Working on schema',
                 joinedAt: new Date()
+              }];
+            }
+            return prev;
+          });
+
+          setCursors(prev => {
+            const exists = prev.find(c => c.userId === user.id);
+            if (!exists) {
+              return [...prev, {
+                userId: user.id,
+                username: user.username,
+                position: { x: 0, y: 0 }, // Default position
+                color: generateRandomColor(), // Ensure a unique color is assigned
+                lastSeen: new Date()
               }];
             }
             return prev;
@@ -955,28 +978,24 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                             {member.username}
                           </p>
                           {member.username === 'current_user' && (
-                            <span className="text-xs bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full">
-                              You
-                            </span>
+                            <span className="text-sm text-gray-500 dark:text-gray-400">(You)</span>
                           )}
                         </div>
                         <p className="text-sm text-gray-500 dark:text-gray-400">
-                          Joined {member.joinedAt.toLocaleDateString()}
+                          Role: <span className="font-medium capitalize">{member.role}</span>
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className={`px-3 py-1 text-xs font-medium rounded-full ${getRoleBadgeColor(member.role)}`}>
                         {member.role}
-                        {member.role === 'owner' && <Crown className="w-3 h-3 inline ml-1" />}
                       </span>
                       {member.role !== 'owner' && member.username !== 'current_user' && (
                         <button
                           onClick={() => removeMember(member.id)}
-                          className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200"
-                          title="Remove member"
+                          className="text-red-500 hover:text-red-700 transition-all duration-200"
                         >
-                          <X className="w-4 h-4" />
+                          Remove
                         </button>
                       )}
                     </div>
