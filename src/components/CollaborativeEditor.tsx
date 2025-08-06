@@ -6,10 +6,16 @@ interface CollaborativeEditorProps {
   userId: string; // İstifadəçi ID-si
 }
 
+interface CursorData {
+  position: { lineNumber: number; column: number };
+  username: string;
+  color: string;
+}
+
 const CollaborativeEditor = ({ workspaceId, userId }: CollaborativeEditorProps) => {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const [cursors, setCursors] = useState({}); // Uzaqdan gələn kursorları izləmək üçün state
+  const [cursors, setCursors] = useState<Record<string, CursorData>>({}); // Uzaqdan gələn kursorları izləmək üçün state
 
   useEffect(() => {
     // WebSocket bağlantısını qur
@@ -31,7 +37,14 @@ const CollaborativeEditor = ({ workspaceId, userId }: CollaborativeEditorProps) 
           { range: payload.range, text: payload.text, forceMoveMarkers: true },
         ]);
       } else if (type === 'cursor-update') {
-        setCursors((prev) => ({ ...prev, [payload.userId]: payload.position }));
+        setCursors((prev) => ({
+          ...prev,
+          [payload.userId]: {
+            position: payload.position,
+            username: payload.username,
+            color: payload.color,
+          },
+        }));
       }
     };
 
@@ -78,7 +91,7 @@ const CollaborativeEditor = ({ workspaceId, userId }: CollaborativeEditorProps) 
   return (
     <div style={{ position: 'relative', height: '100%' }}>
       <div id="editor" style={{ height: '100%' }}></div>
-      {Object.entries(cursors).map(([id, position]) => {
+      {Object.entries(cursors).map(([id, { position, username, color }]) => {
         const typedPosition = position as { lineNumber: number; column: number };
         return (
           <div
@@ -87,12 +100,12 @@ const CollaborativeEditor = ({ workspaceId, userId }: CollaborativeEditorProps) 
               position: 'absolute',
               top: typedPosition.lineNumber * 20, // Sətir hündürlüyünə uyğunlaşdır
               left: typedPosition.column * 8, // Simvol genişliyinə uyğunlaşdır
-              backgroundColor: id === userId ? 'blue' : 'red',
+              backgroundColor: id === userId ? 'blue' : color,
               width: 2,
               height: 20,
             }}
           >
-            {id !== userId && <span>{id}</span>}
+            {id !== userId && <span>{username}</span>}
           </div>
         );
       })}

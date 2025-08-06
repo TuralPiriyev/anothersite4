@@ -814,10 +814,24 @@ app.ws('/ws/collaboration', (ws, req) => {
           });
           break;
         case 'cursor-update':
-          workspace.cursors[payload.userId] = payload.position;
+          workspace.cursors[payload.userId] = {
+            position: payload.position,
+            username: payload.username,
+            color: payload.color
+          };
           workspace.clients.forEach((client) => {
             if (client !== ws) {
-              client.send(JSON.stringify({ type: 'cursor-update', payload }));
+              client.send(
+                JSON.stringify({
+                  type: 'cursor-update',
+                  payload: {
+                    userId: payload.userId,
+                    position: payload.position,
+                    username: payload.username,
+                    color: payload.color
+                  },
+                })
+              );
             }
           });
           break;
