@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const TeamSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -22,12 +22,12 @@ const TeamSchema = new mongoose.Schema({
   }]
 }, { timestamps: true });
 
-TeamSchema.methods.leave = function(userId) {
+TeamSchema.methods.leave = function leave(userId) {
   this.members = this.members.filter(m => !m.user.equals(userId));
   return this.save();
 };
 
-TeamSchema.methods.removeMember = function(memberId, requesterId) {
+TeamSchema.methods.removeMember = function removeMember(memberId, requesterId) {
   if (!this.owner.equals(requesterId)) {
     throw new Error('Yalnız owner üzv silə bilər');
   }
@@ -35,8 +35,8 @@ TeamSchema.methods.removeMember = function(memberId, requesterId) {
   return this.save();
 };
 
-TeamSchema.statics.findByUser = function(userId) {
+TeamSchema.statics.findByUser = function findByUser(userId) {
   return this.find({ 'members.user': userId });
 };
 
-export default mongoose.model('Team', TeamSchema);
+module.exports = mongoose.model('Team', TeamSchema);

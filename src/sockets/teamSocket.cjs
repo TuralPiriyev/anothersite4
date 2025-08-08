@@ -1,66 +1,36 @@
-const User = require('../models/User.cjs');
 const Team = require('../models/Team.cjs');
+const User = require('../models/User.cjs');
 
 module.exports = function registerTeamSocket(io) {
-  io.on('connection', (socket) => {
-    // Join a team room
+  const teamNs = io.of('/team');
+
+  teamNs.on('connection', (socket) => {
     socket.on('joinTeam', async ({ teamId, userId }) => {
       try {
-        if (!teamId || !userId) return;
-        const user = await User.findById(userId, 'username');
-        if (!user) return;
-
-        // Validate membership
-        const team = await Team.findById(teamId);
-        if (!team) return;
-        const isMember = String(team.owner) === String(userId) || team.members.some(m => String(m.user) === String(userId));
-        if (!isMember) return; // do not join non-members
-
-        socket.join(`team:${teamId}`);
-        socket.data.teamId = teamId;
-        socket.data.userId = userId;
-        socket.data.username = user.username;
-
-        io.to(`team:${teamId}`).emit('team:members:update', { type: 'join', userId, username: user.username });
+        socket.join(teamId);
+        const team = await Team.findById(teamId).populate('members.user', 'username email');
+        teamNs.to(teamId).emit('team:members:update', team?.members || []);
       } catch (e) {
         console.error('joinTeam error:', e.message);
       }
     });
 
-    socket.on('leaveTeam', ({ teamId, userId }) => {
-      try {
-        socket.leave(`team:${teamId}`);
-        io.to(`team:${teamId}`).emit('team:members:update', { type: 'leave', userId });
-      } catch (e) {
-        console.error('leaveTeam error:', e.message);
-      }
-    });
-
     socket.on('cursorMove', async ({ teamId, userId, x, y }) => {
       try {
-        if (!teamId || !userId) return;
         const user = await User.findById(userId, 'username');
-        const payload = { userId, username: user?.username || 'Unknown', x, y };
-        socket.to(`team:${teamId}`).emit('team:cursors:update', payload);
+        teamNs.to(teamId).emit('team:cursors:update', { userId, username: user?.username || 'User', x, y });
       } catch (e) {
         console.error('cursorMove error:', e.message);
       }
     });
 
-    socket.on('contentChange', ({ teamId, data }) => {
+    socket.on('leaveTeam', async ({ teamId }) => {
       try {
-        if (!teamId) return;
-        socket.to(`team:${teamId}`).emit('team:content:update', data);
+        socket.leave(teamId);
+        const team = await Team.findById(teamId).populate('members.user', 'username email');
+        teamNs.to(teamId).emit('team:members:update', team?.members || []);
       } catch (e) {
-        console.error('contentChange error:', e.message);
-      }
-    });
-
-    socket.on('disconnect', () => {
-      const teamId = socket.data?.teamId;
-      const userId = socket.data?.userId;
-      if (teamId && userId) {
-        io.to(`team:${teamId}`).emit('team:members:update', { type: 'disconnect', userId });
+        console.error('leaveTeam error:', e.message);
       }
     });
   });

@@ -31,8 +31,8 @@ const { authenticate } = require('./src/middleware/auth.cjs');
 const portfolioRoutes = require('./src/routes/portfolioRoutes.cjs');
 const Invitation = require('./src/models/Invitation.cjs');
 const Member = require('./src/models/Member.cjs');
-const teamRoutes = require('./src/routes/teamRoutes.js');
-const registerTeamSocket = require('./src/sockets/teamSocket.js');
+const teamRoutes = require('./src/routes/teamRoutes.cjs');
+const registerTeamSocket = require('./src/sockets/teamSocket.cjs');
 
 // Config
 const PORT = Number(process.env.PORT) || 5000;
