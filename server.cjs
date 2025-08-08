@@ -90,7 +90,6 @@ async function ensureMongo() {
     const uri = mongod.getUri();
     await mongoose.connect(uri);
     console.log('✅ In-memory MongoDB connected');
-    // Graceful shutdown
     process.on('exit', async () => { try { await mongoose.disconnect(); await mongod.stop(); } catch {} });
     process.on('SIGINT', async () => { try { await mongoose.disconnect(); await mongod.stop(); process.exit(0); } catch { process.exit(0); } });
   } catch (err) {
