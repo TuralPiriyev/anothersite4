@@ -28,6 +28,7 @@
     "framer-motion": "^11.0.3",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.344.0",
+    "mongodb-memory-server": "^10.2.0",
     "mongoose": "^8.16.0",
     "moongose": "^1.0.0",
     "node-cron": "^4.2.0",

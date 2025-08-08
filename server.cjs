@@ -76,18 +76,28 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(bodyParser.json());
 
-// MongoDB - Optional for development
-if (MONGO_URL) {
-  mongoose
-    .connect(MONGO_URL)
-    .then(() => console.log('✅ MongoDB connected'))
-    .catch(err => {
-      console.warn('⚠️ MongoDB connection failed:', err.message);
-      console.log('📡 Continuing without MongoDB (development mode)');
-    });
-} else {
-  console.log('📡 MongoDB not configured, running in development mode without database');
+// MongoDB - ensure a running DB (use memory server if not configured)
+async function ensureMongo() {
+  try {
+    if (MONGO_URL) {
+      await mongoose.connect(MONGO_URL);
+      console.log('✅ MongoDB connected');
+      return;
+    }
+    console.log('📡 MONGO_URL missing, starting in-memory MongoDB...');
+    const { MongoMemoryServer } = require('mongodb-memory-server');
+    const mongod = await MongoMemoryServer.create();
+    const uri = mongod.getUri();
+    await mongoose.connect(uri);
+    console.log('✅ In-memory MongoDB connected');
+    // Graceful shutdown
+    process.on('exit', async () => { try { await mongoose.disconnect(); await mongod.stop(); } catch {} });
+    process.on('SIGINT', async () => { try { await mongoose.disconnect(); await mongod.stop(); process.exit(0); } catch { process.exit(0); } });
+  } catch (err) {
+    console.error('❌ Failed to initialize MongoDB:', err);
+  }
 }
+(async () => { await ensureMongo(); })();
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -1099,11 +1109,34 @@ app.use((err, req, res, next) => {
 });
 
 // Start server (with Socket.io)
-server.listen(PORT, '0.0.0.0', () => {
+(async () => {
+  // Ensure default owner user and a demo team for quick start
+  try {
+    const Team = require('./src/models/Team.cjs');
+    const ownerEmail = process.env.DEMO_OWNER_EMAIL || 'test@example.com';
+    const ownerPass = process.env.DEMO_OWNER_PASS || 'testpass123';
+    let owner = await User.findOne({ email: ownerEmail });
+    if (!owner) {
+      const bcrypt = require('bcrypt');
+      const hashed = await bcrypt.hash(ownerPass, 10);
+      owner = await new User({ fullName: 'Demo Owner', username: 'owner', email: ownerEmail, password: hashed }).save();
+    }
+    const teamExists = await Team.findOne({ owner: owner._id });
+    if (!teamExists) {
+      await Team.create({ name: 'Demo Team', owner: owner._id, members: [{ user: owner._id, role: 'owner' }] });
+      console.log('✅ Demo Team created');
+    }
+  } catch (e) {
+    console.warn('⚠️ Demo seed failed:', e.message);
+  }
+
+  server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server started successfully!`);
   console.log(`📡 Port: ${process.env.SERVER_PORT || 5000}`);
   console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🗄️ MongoDB: ${process.env.MONGO_URL ? 'Connected' : 'Not configured'}`);
   console.log(`📧 SMTP: ${process.env.SMTP_HOST || 'Not configured'}`);
   console.log(`💳 PayPal: ${process.env.PAYPAL_CLIENT_ID ? 'Configured' : 'Not configured'}`);
+  console.log(`👤 Demo login: ${process.env.DEMO_OWNER_EMAIL || 'test@example.com'} / ${process.env.DEMO_OWNER_PASS || 'testpass123'}`);
 });
+})();
