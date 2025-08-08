@@ -4,6 +4,7 @@ import App from './App.tsx';
 import './index.css';
 import { ThemeProvider } from './context/ThemeContext';
 import { TeamProvider } from './context/TeamContext';
+import { AuthProvider } from './context/AuthContext'; // <-- əlavə etdik
 
 // Suppress React DevTools warning in development
 if (import.meta.env.DEV) {
@@ -18,11 +19,12 @@ if (import.meta.env.DEV) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider>
-      <TeamProvider>
-        <App />
-      </TeamProvider>
-    </ThemeProvider>
+    <AuthProvider>           {/* ən üst səviyyədə AuthProvider */}
+      <ThemeProvider>
+        <TeamProvider>
+          <App />
+        </TeamProvider>
+      </ThemeProvider>
+    </AuthProvider>
   </StrictMode>
-  
 );
