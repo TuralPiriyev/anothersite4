@@ -31,6 +31,8 @@ const { authenticate } = require('./src/middleware/auth.cjs');
 const portfolioRoutes = require('./src/routes/portfolioRoutes.cjs');
 const Invitation = require('./src/models/Invitation.cjs');
 const Member = require('./src/models/Member.cjs');
+const teamRoutes = require('./src/routes/teamRoutes.cjs');
+const registerTeamSocket = require('./src/sockets/teamSocket.cjs');
 
 // Config
 const PORT = Number(process.env.PORT) || 5000;
@@ -40,7 +42,20 @@ const SMTP_PORT = Number(process.env.SMTP_PORT);
 
 // Express setup
 const app = express();
-const wsInstance = expressWs(app);
+const http = require('http');
+const server = http.createServer(app);
+const { Server } = require('socket.io');
+const io = new Server(server, {
+  cors: {
+    origin: [
+      'https://startup-1-j563.onrender.com',
+      'http://localhost:5173',
+      'http://localhost:3000'
+    ],
+    credentials: true
+  }
+});
+const wsInstance = expressWs(app, server);
 
 app.use(
   cors({
@@ -86,6 +101,9 @@ app.get('/api/health', (req, res) => {
 
 // Portfolio routes (protected)
 app.use('/api/portfolios', authenticate, portfolioRoutes);
+
+// Team routes (protected)
+app.use('/api/teams', authenticate, teamRoutes);
 
 // Database routes (protected)
 app.post('/api/databases/check', authenticate, async (req, res) => {
@@ -615,6 +633,10 @@ transporter.verify((err) => {
   if (err) console.error('SMTP verify error:', err);
   else console.log('✅ SMTP ready');
 });
+
+// Initialize Team Socket handlers
+registerTeamSocket(io);
+
 const verificationCodes = new Map();
 function generateCode() {
   return String(crypto.randomInt(100000, 999999));
@@ -1076,8 +1098,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
+// Start server (with Socket.io)
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server started successfully!`);
   console.log(`📡 Port: ${process.env.SERVER_PORT || 5000}`);
   console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
