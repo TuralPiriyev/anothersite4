@@ -3,13 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-     "scripts": {
+  "scripts": {
     "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
     "dev:client": "vite",
     "dev:server": "nodemon server.cjs",
     "build": "vite build",
     "start": "node server.cjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node test-team.cjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -40,6 +41,8 @@
     "react-router-dom": "^6.22.0",
     "react-xarrows": "^2.0.2",
     "reactflow": "^11.11.4",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
     "sql.js": "^1.13.0",
     "stripe": "^18.3.0",
     "tailwind": "^4.0.0",
@@ -55,6 +58,7 @@
     "@types/node": "^24.0.10",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
+    "@types/socket.io": "^3.0.1",
     "@types/uuid": "^9.0.8",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.21",
