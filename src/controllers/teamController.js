@@ -121,3 +121,29 @@ export async function getMyTeams(req, res) {
     return res.status(500).json({ error: 'Server error' });
   }
 }
+
+export async function upsertScript(req, res) {
+  try {
+    const { teamId } = req.params;
+    const { name, language = 'sql', content = '' } = req.body;
+    const userId = req.user?._id || req.userId;
+    if (!name) return res.status(400).json({ error: 'name tələb olunur' });
+    const team = await Team.findById(teamId);
+    if (!team) return res.status(404).json({ error: 'Team tapılmadı' });
+    const idx = team.scripts.findIndex(s => s.name === name);
+    if (idx >= 0) {
+      team.scripts[idx].content = content;
+      team.scripts[idx].language = language;
+      team.scripts[idx].updatedBy = userId;
+      team.scripts[idx].updatedAt = new Date();
+    } else {
+      team.scripts.push({ name, language, content, updatedBy: userId, updatedAt: new Date() });
+    }
+    await team.save();
+    const populated = await Team.findById(teamId).populate('owner', 'username email').populate('members.user', 'username email');
+    return res.json({ success: true, team: populated });
+  } catch (err) {
+    console.error('upsertScript error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}

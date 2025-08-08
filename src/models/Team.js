@@ -12,6 +12,13 @@ const TeamSchema = new mongoose.Schema({
     code: { type: String, required: true },
     role: { type: String, enum: ['editor','viewer'], default: 'viewer' },
     status: { type: String, enum: ['pending','accepted','revoked'], default: 'pending' }
+  }],
+  scripts: [{
+    name: { type: String, required: true },
+    language: { type: String, enum: ['sql','js','json','text'], default: 'sql' },
+    content: { type: String, default: '' },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    updatedAt: { type: Date, default: Date.now }
   }]
 }, { timestamps: true });
 
