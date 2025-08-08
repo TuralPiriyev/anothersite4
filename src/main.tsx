@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { ThemeProvider } from './context/ThemeContext';
+import { TeamProvider } from './context/TeamContext';
 
 // Suppress React DevTools warning in development
 if (import.meta.env.DEV) {
@@ -18,7 +19,9 @@ if (import.meta.env.DEV) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-    <App />
+      <TeamProvider>
+        <App />
+      </TeamProvider>
     </ThemeProvider>
   </StrictMode>
   

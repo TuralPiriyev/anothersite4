@@ -7,6 +7,8 @@ import PortfolioPanel from '../panels/PortfolioPanel';
 import ToolsPanel from '../panels/ToolsPanel';
 import CollaborativeCursors, { CursorData } from '../workspace/CollaborativeCursors';
 import { useDatabase } from '../../../context/DatabaseContext';
+import CursorOverlay from '../../../components/CursorOverlay.jsx';
+import TeamDashboard from '../../../components/TeamDashboard.jsx';
 
 const MainLayout: React.FC = () => {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
@@ -233,6 +235,9 @@ const MainLayout: React.FC = () => {
           />
         )}
       </div>
+      <CursorOverlay />
+      {/* You may render TeamDashboard where appropriate in your UI; keeping minimal integration here */}
+      {/* <TeamDashboard /> */}
     </div>
   );
 };
