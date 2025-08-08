@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import io, { Socket } from 'socket.io-client';
+import { io, Socket } from 'socket.io-client';
 import api from '../utils/api';
 import { useAuth } from './AuthContext';
 
@@ -39,22 +39,15 @@ export const TeamProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (!currentTeamId || !user) return;
-    // create socket connection on demand
-    const s = io('/', { path: '/socket.io', withCredentials: true, transports: ['websocket'] });
+    const s: Socket = io('/team', { path: '/socket.io', withCredentials: true, transports: ['websocket'] });
     setSocket(s);
     s.emit('joinTeam', { teamId: currentTeamId, userId: user.id });
 
-    s.on('team:members:update', (payload: any) => {
-      if (payload.type === 'join' || payload.type === 'leave' || payload.type === 'disconnect') {
-        fetchMyTeams();
-      }
+    s.on('team:members:update', (members: any[]) => {
+      fetchMyTeams();
     });
     s.on('team:cursors:update', (cursor: { userId: string; username: string; x: number; y: number }) => {
-      // could be handled by a dedicated UI overlay
       window.dispatchEvent(new CustomEvent('team-cursor', { detail: cursor }));
-    });
-    s.on('team:content:update', (data: any) => {
-      window.dispatchEvent(new CustomEvent('team-content', { detail: data }));
     });
 
     return () => {
@@ -83,9 +76,7 @@ export const TeamProvider: React.FC<{ children: React.ReactNode }> = ({ children
   async function acceptInvitation(teamId: string, code: string) {
     await api.post(`/teams/${teamId}/accept`, { code });
     await fetchMyTeams();
-    if (user && socket) {
-      socket.emit('joinTeam', { teamId, userId: user.id });
-    }
+    if (user && socket) socket.emit('joinTeam', { teamId, userId: user.id });
   }
 
   async function removeMember(teamId: string, memberId: string) {

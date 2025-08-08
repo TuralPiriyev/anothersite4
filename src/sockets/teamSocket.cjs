@@ -1,49 +1,39 @@
-// src/sockets/teamSocket.cjs
+const Team = require('../models/Team.cjs');
+const User = require('../models/User.cjs');
 
-/**
- * registerTeamSocket(io)
- * Bu modul Socket.IO ilə "Team Collaboration" funksionallığını təmin edir.
- * Hər bir team üçün ayrı namespace yaradır və connection, join, leave,
- * cursor move event-lərini idarə edir.
- */
 function registerTeamSocket(io) {
-  // /team namespace-i
   const teamNs = io.of('/team');
 
   teamNs.on('connection', socket => {
-    console.log('🟢 Yeni team socket bağlantısı:', socket.id);
-
-    // İstifadəçi komandaya qoşulduqda
-    socket.on('joinTeam', ({ teamId, userId, username }) => {
-      socket.join(teamId);
-      console.log(`⚡️ [${username || userId}] qoşuldu team ${teamId}-ə`);
-      // Komanda üzvlərinə siyahının yeniləndiyini bildir
-      teamNs.to(teamId).emit('team:members:update', { teamId });
+    socket.on('joinTeam', async ({ teamId, userId }) => {
+      try {
+        socket.join(teamId);
+        const team = await Team.findById(teamId).populate('members.user', 'username');
+        teamNs.to(teamId).emit('team:members:update', team?.members || []);
+      } catch (e) {
+        console.error('joinTeam error:', e.message);
+      }
     });
 
-    // İstifadəçi kursorunu hərəkət etdirdikdə
-    socket.on('cursorMove', ({ teamId, userId, username, x, y }) => {
-      teamNs.to(teamId).emit('team:cursors:update', {
-        userId,
-        username,
-        x,
-        y
-      });
+    socket.on('cursorMove', async ({ teamId, userId, x, y }) => {
+      try {
+        const user = await User.findById(userId, 'username');
+        teamNs.to(teamId).emit('team:cursors:update', { userId, username: user?.username || 'User', x, y });
+      } catch (e) {
+        console.error('cursorMove error:', e.message);
+      }
     });
 
-    // İstifadəçi komandadan çıxdıqda
-    socket.on('leaveTeam', ({ teamId, userId, username }) => {
-      socket.leave(teamId);
-      console.log(`❌ [${username || userId}] ayrıldı team ${teamId}-dən`);
-      teamNs.to(teamId).emit('team:members:update', { teamId });
-    });
-
-    // Socket disconnect olduqda
-    socket.on('disconnect', reason => {
-      console.log(`🔌 Socket ${socket.id} ayrıldı:`, reason);
+    socket.on('leaveTeam', async ({ teamId }) => {
+      try {
+        socket.leave(teamId);
+        const team = await Team.findById(teamId).populate('members.user', 'username');
+        teamNs.to(teamId).emit('team:members:update', team?.members || []);
+      } catch (e) {
+        console.error('leaveTeam error:', e.message);
+      }
     });
   });
 }
 
-// Default eksport: funksiyanın özü
 module.exports = registerTeamSocket;

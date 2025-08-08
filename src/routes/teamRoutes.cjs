@@ -1,18 +1,29 @@
+// src/routes/teamRoutes.js
+
 const express = require('express');
 const router = express.Router();
-const { inviteMember, acceptInvitation, leaveTeam, removeMember, getMyTeams, createTeam, getTeam } = require('../controllers/teamController.cjs');
 
-// Create & Get teams
-router.post('/', createTeam);
+const {
+  inviteMember,
+  acceptInvitation,
+  leaveTeam,
+  removeMember,
+  getMyTeams
+} = require('../controllers/teamController.cjs');
+
+// İstifadəçinin öz komandalarını götür
 router.get('/mine', getMyTeams);
-router.get('/:teamId', getTeam);
 
-// Invite & Accept
+// Davət göndərmə
 router.post('/:teamId/invite', inviteMember);
+
+// Davəti qəbul etmə
 router.post('/:teamId/accept', acceptInvitation);
 
-// Members
+// Komandadan ayrılma
 router.post('/:teamId/leave', leaveTeam);
+
+// Üzv silmə (yalnız owner)
 router.delete('/:teamId/members/:memberId', removeMember);
 
 module.exports = router;

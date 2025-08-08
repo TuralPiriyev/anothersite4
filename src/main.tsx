@@ -4,9 +4,9 @@ import App from './App.tsx';
 import './index.css';
 import { ThemeProvider } from './context/ThemeContext';
 import { TeamProvider } from './context/TeamContext';
-import { AuthProvider } from './context/AuthContext'; // <-- əlavə etdik
+import { AuthProvider } from './context/AuthContext'; // YENİDƏN ƏLAVƏ EDİLDİ
 
-// Suppress React DevTools warning in development
+// React DevTools xəbərdarlıqlarını gizlət
 if (import.meta.env.DEV) {
   const originalConsoleWarn = console.warn;
   console.warn = (...args) => {
@@ -19,7 +19,7 @@ if (import.meta.env.DEV) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthProvider>           {/* ən üst səviyyədə AuthProvider */}
+    <AuthProvider> {/* BURADA DAXİL OLUB */}
       <ThemeProvider>
         <TeamProvider>
           <App />
