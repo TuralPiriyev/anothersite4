@@ -1,47 +1,49 @@
-const axios = require('axios');
-const { io } = require('socket.io-client');
+// src/sockets/teamSocket.cjs
 
-const BASE = process.env.API || 'http://localhost:5000/api';
+/**
+ * registerTeamSocket(io)
+ * Bu modul Socket.IO ilə "Team Collaboration" funksionallığını təmin edir.
+ * Hər bir team üçün ayrı namespace yaradır və connection, join, leave,
+ * cursor move event-lərini idarə edir.
+ */
+function registerTeamSocket(io) {
+  // /team namespace-i
+  const teamNs = io.of('/team');
 
-(async () => {
-  try {
-    console.log('Team Collaboration quick test');
-    // Login existing seeded user
-    const { data: login } = await axios.post(`${BASE}/auth/login`, { email: 'test@example.com', password: 'testpass123' });
-    const token = login.token;
-    const userId = login.user.id;
-    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  teamNs.on('connection', socket => {
+    console.log('🟢 Yeni team socket bağlantısı:', socket.id);
 
-    // Create a team for this test
-    const { data: created } = await axios.post(`${BASE}/teams`, { name: 'Demo Team' });
-    const teamId = created._id;
-
-    // Invite someone
-    const { data: inv } = await axios.post(`${BASE}/teams/${teamId}/invite`, { email: 'invitee@example.com', role: 'viewer' });
-    console.log('Invite code:', inv.code);
-
-    // Accept as current user (for demo)
-    const { data: acc } = await axios.post(`${BASE}/teams/${teamId}/accept`, { code: inv.code });
-    console.log('Accepted:', acc.success);
-
-    // Socket join and broadcast cursor
-    const socket = io('http://localhost:5000', { transports: ['websocket'] });
-    await new Promise(resolve => socket.on('connect', resolve));
-    socket.emit('joinTeam', { teamId, userId });
-
-    socket.on('team:cursors:update', payload => {
-      console.log('Cursor update received:', payload);
+    // İstifadəçi komandaya qoşulduqda
+    socket.on('joinTeam', ({ teamId, userId, username }) => {
+      socket.join(teamId);
+      console.log(`⚡️ [${username || userId}] qoşuldu team ${teamId}-ə`);
+      // Komanda üzvlərinə siyahının yeniləndiyini bildir
+      teamNs.to(teamId).emit('team:members:update', { teamId });
     });
 
-    socket.emit('cursorMove', { teamId, userId, x: 100, y: 200 });
+    // İstifadəçi kursorunu hərəkət etdirdikdə
+    socket.on('cursorMove', ({ teamId, userId, username, x, y }) => {
+      teamNs.to(teamId).emit('team:cursors:update', {
+        userId,
+        username,
+        x,
+        y
+      });
+    });
 
-    setTimeout(() => {
-      socket.disconnect();
-      console.log('Done');
-      process.exit(0);
-    }, 1000);
-  } catch (e) {
-    console.error('Test failed:', e.response?.data || e.message);
-    process.exit(1);
-  }
-})();
+    // İstifadəçi komandadan çıxdıqda
+    socket.on('leaveTeam', ({ teamId, userId, username }) => {
+      socket.leave(teamId);
+      console.log(`❌ [${username || userId}] ayrıldı team ${teamId}-dən`);
+      teamNs.to(teamId).emit('team:members:update', { teamId });
+    });
+
+    // Socket disconnect olduqda
+    socket.on('disconnect', reason => {
+      console.log(`🔌 Socket ${socket.id} ayrıldı:`, reason);
+    });
+  });
+}
+
+// Default eksport: funksiyanın özü
+module.exports = registerTeamSocket;
