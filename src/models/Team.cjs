@@ -1,4 +1,3 @@
-// src/models/Team.cjs
 const mongoose = require('mongoose');
 
 const TeamSchema = new mongoose.Schema({
@@ -6,16 +5,38 @@ const TeamSchema = new mongoose.Schema({
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   members: [{
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    role: { type: String, enum: ['owner', 'editor', 'viewer'], default: 'viewer' }
+    role: { type: String, enum: ['owner','editor','viewer'], default: 'viewer' }
   }],
   invitations: [{
     email: { type: String, required: true },
     code: { type: String, required: true },
-    role: { type: String, enum: ['editor', 'viewer'], default: 'viewer' },
-    status: { type: String, enum: ['pending', 'accepted', 'revoked'], default: 'pending' }
+    role: { type: String, enum: ['editor','viewer'], default: 'viewer' },
+    status: { type: String, enum: ['pending','accepted','revoked'], default: 'pending' }
+  }],
+  scripts: [{
+    name: { type: String, required: true },
+    language: { type: String, enum: ['sql','js','json','text'], default: 'sql' },
+    content: { type: String, default: '' },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    updatedAt: { type: Date, default: Date.now }
   }]
 }, { timestamps: true });
 
-const Team = mongoose.models.Team || mongoose.model('Team', TeamSchema);
+TeamSchema.methods.leave = function leave(userId) {
+  this.members = this.members.filter(m => !m.user.equals(userId));
+  return this.save();
+};
 
-module.exports = Team;
+TeamSchema.methods.removeMember = function removeMember(memberId, requesterId) {
+  if (!this.owner.equals(requesterId)) {
+    throw new Error('Yalnız owner üzv silə bilər');
+  }
+  this.members = this.members.filter(m => m.user.toString() !== memberId);
+  return this.save();
+};
+
+TeamSchema.statics.findByUser = function findByUser(userId) {
+  return this.find({ 'members.user': userId });
+};
+
+module.exports = mongoose.model('Team', TeamSchema);

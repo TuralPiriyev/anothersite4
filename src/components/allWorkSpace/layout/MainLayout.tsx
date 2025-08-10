@@ -7,8 +7,8 @@ import PortfolioPanel from '../panels/PortfolioPanel';
 import ToolsPanel from '../panels/ToolsPanel';
 import CollaborativeCursors, { CursorData } from '../workspace/CollaborativeCursors';
 import { useDatabase } from '../../../context/DatabaseContext';
-import CursorOverlay from '../../../components/CursorOverlay.jsx';
-import TeamDashboard from '../../../components/TeamDashboard.jsx';
+import CursorOverLay from '../../jsx-ler/';
+import TeamDashboard from ;
 
 const MainLayout: React.FC = () => {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);

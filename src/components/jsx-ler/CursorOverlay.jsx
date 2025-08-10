@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
-export default function CursorOverlay() {
+export default function CursorOverLay() {
   const [cursors, setCursors] = useState([]);
 
   useEffect(() => {

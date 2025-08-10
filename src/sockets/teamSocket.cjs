@@ -1,14 +1,14 @@
 const Team = require('../models/Team.cjs');
 const User = require('../models/User.cjs');
 
-function registerTeamSocket(io) {
+module.exports = function registerTeamSocket(io) {
   const teamNs = io.of('/team');
 
-  teamNs.on('connection', socket => {
+  teamNs.on('connection', (socket) => {
     socket.on('joinTeam', async ({ teamId, userId }) => {
       try {
         socket.join(teamId);
-        const team = await Team.findById(teamId).populate('members.user', 'username');
+        const team = await Team.findById(teamId).populate('members.user', 'username email');
         teamNs.to(teamId).emit('team:members:update', team?.members || []);
       } catch (e) {
         console.error('joinTeam error:', e.message);
@@ -27,13 +27,11 @@ function registerTeamSocket(io) {
     socket.on('leaveTeam', async ({ teamId }) => {
       try {
         socket.leave(teamId);
-        const team = await Team.findById(teamId).populate('members.user', 'username');
+        const team = await Team.findById(teamId).populate('members.user', 'username email');
         teamNs.to(teamId).emit('team:members:update', team?.members || []);
       } catch (e) {
         console.error('leaveTeam error:', e.message);
       }
     });
   });
-}
-
-module.exports = registerTeamSocket;
+};
