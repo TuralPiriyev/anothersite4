@@ -7,9 +7,10 @@ import api from '../utils/api.js';
 
 export default function TeamDashboard() {
   const { user } = useAuth();
-  const { teams, currentTeam, setCurrentTeamId, sendInvitation, acceptInvitation, removeMember, leaveTeam } = useTeam();
+  const { teams, currentTeam, setCurrentTeamId, createTeam, acceptInvitation, leaveTeam } = useTeam();
   const [code, setCode] = useState('');
   const [status, setStatus] = useState('Disconnected');
+  const [newTeamName, setNewTeamName] = useState('My Team');
   const [scriptName, setScriptName] = useState('schema.sql');
   const [scriptContent, setScriptContent] = useState('');
 
@@ -36,7 +37,10 @@ export default function TeamDashboard() {
         <div className="text-sm text-green-600">{status}</div>
       </div>
 
-      <div className="flex gap-4 items-center">
+      {/* Team create */}
+      <div className="flex gap-2 items-center">
+        <input className="border rounded p-2" placeholder="New team name" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} />
+        <button className="px-3 py-2 bg-indigo-600 text-white rounded" onClick={() => createTeam(newTeamName)}>Create Team</button>
         <select className="border rounded p-2" value={currentTeam?._id || ''} onChange={e => setCurrentTeamId(e.target.value || null)}>
           <option value="">Select Team</option>
           {teams.map(t => (
@@ -61,7 +65,7 @@ export default function TeamDashboard() {
           </div>
 
           <div className="space-y-2">
-            <h3 className="font-medium">Members</h3>
+            <h3 className="font-medium">Team Members</h3>
             <TeamMembersList team={currentTeam} />
           </div>
         </div>

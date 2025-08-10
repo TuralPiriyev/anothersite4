@@ -17,6 +17,29 @@ function buildTransporter() {
   }
 }
 
+async function createTeam(req, res) {
+  try {
+    const userId = req.user?._id || req.userId;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Team name tələb olunur' });
+
+    const team = await Team.create({
+      name,
+      owner: userId,
+      members: [{ user: userId, role: 'owner' }]
+    });
+
+    const populated = await Team.findById(team._id)
+      .populate('owner', 'username email')
+      .populate('members.user', 'username email');
+
+    return res.status(201).json(populated);
+  } catch (err) {
+    console.error('createTeam error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
 async function inviteMember(req, res) {
   try {
     const { teamId } = req.params;
@@ -150,4 +173,4 @@ async function upsertScript(req, res) {
   }
 }
 
-module.exports = { inviteMember, acceptInvitation, leaveTeam, removeMember, getMyTeams, upsertScript };
+module.exports = { createTeam, inviteMember, acceptInvitation, leaveTeam, removeMember, getMyTeams, upsertScript };
