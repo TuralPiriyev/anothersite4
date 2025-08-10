@@ -3,7 +3,7 @@ import { useTeam } from '../context/TeamContext';
 import { useAuth } from '../context/AuthContext';
 import InvitationForm from './InvitationForm.jsx';
 import TeamMembersList from './TeamMembersList.jsx';
-import api from '../utils/api.js';
+import api from '../utils/api.ts';
 
 export default function TeamDashboard() {
   const { user } = useAuth();
