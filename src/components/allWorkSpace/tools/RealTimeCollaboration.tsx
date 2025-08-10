@@ -7,7 +7,7 @@ import { useSubscription } from '../../../context/SubscriptionContext';
 import { useDatabase } from '../../../context/DatabaseContext';
 import { collaborationService, CollaborationUser } from '../../../services/collaborationService';
 import { mongoService } from '../../../services/mongoService';
-import api from '../../../utils/api';
+
 
  const getRoleBadgeColor = (role: CollaboratorPresence['role']): string => {
   switch (role) {
@@ -73,7 +73,8 @@ const RealTimeCollaboration: React.FC = () => {
     syncWorkspaceWithMongoDB,
     addTable,
     updateTable,
-    removeTable
+    removeTable,
+    validateUsername
   } = useDatabase();
   
 const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStatus>({
@@ -310,7 +311,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     };
   }, [isConnected]);
 
-  // Real database collaboration functions
+  // Invitation via DatabaseContext so UI updates immediately
   const handleSendInvitation = async () => {
     if (!inviteUsername.trim()) {
       setInviteError('Please enter a username');
@@ -322,68 +323,43 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     setInviteSuccess('');
 
     try {
-      // Validate username against real database
-      const response = await api.post('/users/validate', { username: inviteUsername });
-      
-      if (!response.data.exists) {
+      const exists = await validateUsername(inviteUsername);
+      if (!exists) {
         setInviteError('User not found in our database.');
         setIsInviting(false);
         return;
       }
 
-      // Check if user is already invited or a member
-      const existingInvite = currentSchema.invitations.find(
+      const alreadyInvited = currentSchema.invitations.find(
         inv => inv.inviteeUsername.toLowerCase() === inviteUsername.toLowerCase() && inv.status === 'pending'
       );
-      const existingMember = currentSchema.members.find(
-        member => member.username.toLowerCase() === inviteUsername.toLowerCase()
+      const alreadyMember = currentSchema.members.find(
+        m => m.username.toLowerCase() === inviteUsername.toLowerCase()
       );
-
-      if (existingInvite) {
+      if (alreadyInvited) {
         setInviteError('User already has a pending invitation.');
         setIsInviting(false);
         return;
       }
-
-      if (existingMember) {
+      if (alreadyMember) {
         setInviteError('User is already a team member.');
         setIsInviting(false);
         return;
       }
 
-      // Generate join code
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let joinCode = '';
-      for (let i = 0; i < 8; i++) {
-        joinCode += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-
-      // Save to real MongoDB
-      const invitationResponse = await api.post('/invitations', {
-        workspaceId: currentSchema.id,
+      const code = await inviteToWorkspace({
         inviterUsername: 'current_user',
         inviteeUsername: inviteUsername,
-        role: inviteRole,
-        joinCode,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        status: 'pending'
+        role: inviteRole
       });
 
-      if (invitationResponse.data) {
-        setGeneratedCode(joinCode);
-        setInviteSuccess(`Invitation sent successfully! Share this join code with ${inviteUsername}:`);
-        
-        // Reset form
-        setInviteUsername('');
-        setInviteRole('editor');
-      } else {
-        setInviteError('Failed to create invitation. Please try again.');
-      }
-      
+      setGeneratedCode(code);
+      setInviteSuccess(`Invitation sent successfully! Share this join code with ${inviteUsername}:`);
+      setInviteUsername('');
+      setInviteRole('editor');
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || 'Failed to send invitation. Please try again.';
-      setInviteError(errorMessage);
+      const message = error?.response?.data?.error || 'Failed to send invitation. Please try again.';
+      setInviteError(message);
       console.error('Invitation error:', error);
     } finally {
       setIsInviting(false);
@@ -401,41 +377,16 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     setJoinSuccess('');
 
     try {
-      // Validate join code with real database
-      const response = await api.post('/invitations/validate', { joinCode: joinCode.toUpperCase() });
-      
-      if (!response.data.valid) {
-        setJoinError(response.data.error || 'Invalid or expired code.');
-        setIsJoining(false);
-        return;
-      }
-
-      const invitation = response.data.invitation;
-      
-      // Update invitation status in database
-      await api.put(`/invitations/${invitation.id}`, { status: 'accepted' });
-
-      // Add member to database
-      const memberResponse = await api.post('/members', {
-        workspaceId: invitation.workspaceId,
-        id: crypto.randomUUID(),
-        username: invitation.inviteeUsername,
-        role: invitation.role,
-        joinedAt: new Date().toISOString()
-      });
-
-      if (memberResponse.data) {
-        setJoinSuccess(`Successfully joined the workspace! You now have ${invitation.role} access.`);
+      const ok = await acceptWorkspaceInvitation(joinCode);
+      if (ok) {
+        setJoinSuccess('Successfully joined the workspace!');
         setJoinCode('');
-        
-        // Switch to members tab to show the new member
-        setTimeout(() => setActiveTab('members'), 2000);
+        setTimeout(() => setActiveTab('members'), 1000);
       } else {
         setJoinError('Failed to join workspace.');
       }
-      
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || 'Failed to accept invitation. Please try again.';
+      const errorMessage = error?.response?.data?.error || 'Failed to accept invitation. Please try again.';
       setJoinError(errorMessage);
       console.error('Join error:', error);
     } finally {
@@ -459,18 +410,57 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     const member = currentSchema.members.find(m => m.id === memberId);
     if (!member) return;
 
-    if (confirm(`Are you sure you want to remove ${member.username} from the workspace?`)) {
-      removeWorkspaceMember(memberId);
-      
+    if (!confirm(`Remove ${member.username} from this workspace?`)) return;
+
+    try {
       // Update real database
-      try {
-        await api.delete(`/api/members/${memberId}`);
+             try {
+        // Optionally call your backend here if required
         await syncWorkspaceWithMongoDB();
       } catch (error) {
-        console.error('Failed to update database:', error);
+        console.warn('Remote member delete failed; continuing with local removal.', error);
       }
+
+      // Update local state
+      removeWorkspaceMember(memberId);
+    } catch (error) {
+      console.error('Error removing member:', error);
     }
   };
+
+  // Real-time workspace synchronization
+  useEffect(() => {
+    if (currentPlan === 'ultimate' && currentSchema.isShared) {
+      const syncInterval = setInterval(async () => {
+        try {
+          // Fetch latest workspace data from MongoDB
+          const workspaceMembers = await mongoService.getWorkspaceMembers(currentSchema.id);
+          const workspaceInvitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
+          
+          // Update local state with fresh data
+          setCollaborators(workspaceMembers.map(member => ({
+            userId: member.id,
+            username: member.username,
+            role: member.role,
+            status: 'online',
+            joinedAt: new Date(member.joinedAt)
+          })));
+
+          setCollaborationStatus(prev => ({
+            ...prev,
+            isConnected: true,
+            lastSync: new Date().toISOString(),
+            activeUsers: workspaceMembers.length
+          }));
+        } catch (error) {
+          console.error('Failed to sync workspace data:', error);
+          setConnectionQuality('poor');
+        }
+      }, 5000);
+
+      return () => clearInterval(syncInterval);
+    }
+  }, [currentPlan, currentSchema.id, currentSchema.isShared]);
 
   const handleSchemaChangeEvent = (message: any) => {
     const { changeType, data } = message;
@@ -500,18 +490,9 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     syncWorkspaceWithMongoDB();
   };
 
-  const addRealtimeEvent = (type: RealtimeEvent['type'], userId: string, username: string, data: any) => {
-    const event: RealtimeEvent = {
-      id: Date.now().toString(),
-      type,
-      userId,
-      username,
-      timestamp:  new Date().toISOString(),
-      data
-    };
-    
-    setRealtimeEvents(prev => [event, ...prev.slice(0, 49)]); // Keep last 50 events
-  };
+  function addRealtimeEvent(type: RealtimeEvent['type'], userId: string, username: string, data: any) {
+    setRealtimeEvents(prev => [{ id: `${Date.now()}_${Math.random()}`, type, userId, username, timestamp: new Date().toISOString(), data }, ...prev].slice(0, 100));
+  }
 
   const broadcastCursorPosition = (x: number, y: number, selection?: any) => {
     if (isConnected && collaborationService.isConnectedState()) {
