@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { useTeam } from '../../context/TeamContext.js';
-import { useAuth } from '../../context/AuthContext.js';
-import InvitationForm from '../InvitationForm.jsx';
-import TeamMembersList from '../TeamMembersList.jsx';
-import api from '../../utils/api.js';
+import { useTeam } from '../context/TeamContext.js';
+import { useAuth } from '../context/AuthContext.js';
+import InvitationForm from './InvitationForm.jsx';
+import TeamMembersList from './TeamMembersList.jsx';
+import api from '../utils/api.js';
 
 export default function TeamDashboard() {
   const { user } = useAuth();
