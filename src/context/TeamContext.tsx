@@ -3,9 +3,9 @@ import { io, Socket } from 'socket.io-client';
 import api from '../utils/api';
 import { useAuth } from './AuthContext';
 
-interface TeamMember { _id?: string; user: { _id: string; username: string }; role: 'owner'|'editor'|'viewer'; }
+interface TeamMember { _id?: string; user: { _id: string; username: string; email?: string }; role: 'owner'|'editor'|'viewer'; }
 interface Invitation { email: string; code: string; role: 'editor'|'viewer'; status: 'pending'|'accepted'|'revoked'; }
-interface Team { _id: string; name: string; owner: { _id: string; username: string }; members: TeamMember[]; invitations: Invitation[]; }
+interface Team { _id: string; name: string; owner: { _id: string; username: string; email?: string }; members: TeamMember[]; invitations: Invitation[]; }
 
 interface TeamContextType {
   teams: Team[];
@@ -14,6 +14,7 @@ interface TeamContextType {
   invitations: Invitation[];
   fetchMyTeams: () => Promise<void>;
   setCurrentTeamId: (teamId: string | null) => void;
+  createTeam: (name: string) => Promise<void>;
   sendInvitation: (teamId: string, email: string, role: 'editor'|'viewer') => Promise<string>;
   acceptInvitation: (teamId: string, code: string) => Promise<void>;
   removeMember: (teamId: string, memberId: string) => Promise<void>;
@@ -67,6 +68,12 @@ export const TeamProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentTeamIdState(teamId);
   }
 
+  async function createTeam(name: string) {
+    const { data } = await api.post('/teams', { name });
+    await fetchMyTeams();
+    setCurrentTeamIdState(data?._id || null);
+  }
+
   async function sendInvitation(teamId: string, email: string, role: 'editor'|'viewer') {
     const { data } = await api.post(`/teams/${teamId}/invite`, { email, role });
     await fetchMyTeams();
@@ -98,7 +105,7 @@ export const TeamProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   return (
-    <TeamContext.Provider value={{ teams, currentTeam, members, invitations, fetchMyTeams, setCurrentTeamId, sendInvitation, acceptInvitation, removeMember, leaveTeam, broadcastCursor }}>
+    <TeamContext.Provider value={{ teams, currentTeam, members, invitations, fetchMyTeams, setCurrentTeamId, createTeam, sendInvitation, acceptInvitation, removeMember, leaveTeam, broadcastCursor }}>
       {children}
     </TeamContext.Provider>
   );

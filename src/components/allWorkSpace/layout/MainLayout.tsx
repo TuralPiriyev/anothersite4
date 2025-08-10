@@ -7,7 +7,8 @@ import PortfolioPanel from '../panels/PortfolioPanel';
 import ToolsPanel from '../panels/ToolsPanel';
 import CollaborativeCursors, { CursorData } from '../workspace/CollaborativeCursors';
 import { useDatabase } from '../../../context/DatabaseContext';
-import CursorOverLay from '../../CursorOverlay.jsx';
+// Removed legacy overlay import to prevent duplicate cursors
+// import CursorOverLay from '../../CursorOverlay.jsx';
 import TeamDashboard from '../../TeamDashboard.jsx';
 
 const MainLayout: React.FC = () => {
@@ -235,7 +236,8 @@ const MainLayout: React.FC = () => {
           />
         )}
       </div>
-      <CursorOverLay />
+      {/* Removed legacy CursorOverlay to avoid duplicate cursors */}
+      {/* <CursorOverLay /> */}
       {/* You may render TeamDashboard where appropriate in your UI; keeping minimal integration here */}
       {/* <TeamDashboard /> */}
     </div>
