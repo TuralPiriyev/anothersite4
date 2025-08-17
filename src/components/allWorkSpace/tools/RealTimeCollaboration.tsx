@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useSubscription } from '../../../context/SubscriptionContext';
 import { useDatabase } from '../../../context/DatabaseContext';
+import { usePortfolio } from '../../../context/PortfolioContext';
 import { collaborationService } from '../../../services/collaborationService';
 import { mongoService } from '../../../services/mongoService';
 import CollaborationStatus from './CollaborationStatus';
@@ -28,7 +29,8 @@ interface DatabaseOption {
 
 const RealTimeCollaboration: React.FC = () => {
   const { canUseFeature, setShowUpgradeModal, setUpgradeReason } = useSubscription();
-  const { currentSchema, schemas, importSchema } = useDatabase();
+  const { currentSchema, importSchema } = useDatabase();
+  const { portfolios } = usePortfolio();
   
   // State management
   const [activeTab, setActiveTab] = useState<'send' | 'accept' | 'members'>('send');
@@ -54,14 +56,25 @@ const RealTimeCollaboration: React.FC = () => {
   // Team members state
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [isLoadingPortfolios, setIsLoadingPortfolios] = useState(false);
 
-  // Available databases for selection
-  const availableDatabases: DatabaseOption[] = schemas.map(schema => ({
-    id: schema.id,
-    name: schema.name,
-    tablesCount: schema.tables.length,
-    lastModified: schema.updatedAt
-  }));
+  // Available databases for selection from portfolios
+  const availableDatabases: DatabaseOption[] = portfolios.map(portfolio => {
+    let tablesCount = 0;
+    try {
+      const schemaData = JSON.parse(portfolio.scripts);
+      tablesCount = schemaData.tables ? schemaData.tables.length : 0;
+    } catch (error) {
+      console.warn('Failed to parse portfolio schema:', error);
+    }
+    
+    return {
+      id: portfolio._id,
+      name: portfolio.name,
+      tablesCount,
+      lastModified: new Date(portfolio.createdAt)
+    };
+  });
 
   // Check if user can use collaboration
   const canUseCollaboration = canUseFeature('canUseAdvancedSecurity');
@@ -214,9 +227,18 @@ const RealTimeCollaboration: React.FC = () => {
       }
 
       // Load selected database schema
-      const selectedSchema = schemas.find(s => s.id === selectedDatabase);
-      if (selectedSchema) {
-        importSchema(selectedSchema);
+      const selectedPortfolio = portfolios.find(p => p._id === selectedDatabase);
+      if (selectedPortfolio) {
+        try {
+          const schemaData = JSON.parse(selectedPortfolio.scripts);
+          importSchema(schemaData);
+          console.log('✅ Selected database schema loaded:', selectedPortfolio.name);
+        } catch (error) {
+          console.error('Failed to load selected database schema:', error);
+          setInviteError('Failed to load selected database schema');
+          setIsSendingInvite(false);
+          return;
+        }
       }
 
       // Create invitation
@@ -304,7 +326,10 @@ const RealTimeCollaboration: React.FC = () => {
   // Load team members on mount
   useEffect(() => {
     if (canUseCollaboration) {
+      setIsLoadingPortfolios(true);
       loadTeamMembers();
+      // Portfolio loading is handled by PortfolioProvider
+      setTimeout(() => setIsLoadingPortfolios(false), 1000);
     }
   }, [canUseCollaboration, loadTeamMembers]);
 
@@ -415,15 +440,23 @@ const RealTimeCollaboration: React.FC = () => {
               <select
                 value={selectedDatabase}
                 onChange={(e) => setSelectedDatabase(e.target.value)}
+                disabled={isLoadingPortfolios}
                 className="w-full px-3 py-2 border border-blue-300 dark:border-blue-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                <option value="">Select a database to share</option>
+                <option value="">
+                  {isLoadingPortfolios ? 'Loading portfolios...' : 'Select a database to share'}
+                </option>
                 {availableDatabases.map(db => (
                   <option key={db.id} value={db.id}>
-                    {db.name} ({db.tablesCount} tables)
+                    {db.name} ({db.tablesCount} tables) - {db.lastModified.toLocaleDateString()}
                   </option>
                 ))}
               </select>
+              {availableDatabases.length === 0 && !isLoadingPortfolios && (
+                <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
+                  No saved portfolios found. Create and save a database schema first.
+                </p>
+              )}
             </div>
 
             <div>
@@ -554,7 +587,7 @@ const RealTimeCollaboration: React.FC = () => {
             {/* Send Button */}
             <button
               onClick={handleSendInvitation}
-              disabled={isSendingInvite || !inviteUsername.trim() || !selectedDatabase}
+              disabled={isSendingInvite || !inviteUsername.trim() || !selectedDatabase || isLoadingPortfolios}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg transition-colors duration-200 font-medium"
             >
               {isSendingInvite ? (
