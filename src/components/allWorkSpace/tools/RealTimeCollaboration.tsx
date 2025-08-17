@@ -8,8 +8,8 @@ import { useSubscription } from '../../../context/SubscriptionContext';
 import { useDatabase } from '../../../context/DatabaseContext';
 import { usePortfolio } from '../../../context/PortfolioContext';
 import { collaborationService } from '../../../services/collaborationService';
-import { mongoService } from '../../../services/mongoService';
 import CollaborationStatus from './CollaborationStatus';
+import { v4 as uuidv4 } from 'uuid';
 
 interface TeamMember {
   id: string;

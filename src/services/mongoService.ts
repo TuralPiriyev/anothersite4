@@ -5,8 +5,14 @@ class MongoService {
   private baseUrl: string;
 
   constructor() {
-    const baseURL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:5000/api';
-    this.baseUrl = baseURL;
+    const apiUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 
+                  (typeof window !== 'undefined' && window.location.hostname === 'localhost' 
+                    ? 'http://localhost:5000' 
+                    : typeof window !== 'undefined' 
+                      ? window.location.origin 
+                      : 'http://localhost:5000');
+    
+    this.baseUrl = `${apiUrl}/api`;
     
     if (import.meta.env.DEV) {
       console.log('🔧 MongoDB Service Configuration:');

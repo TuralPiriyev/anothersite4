@@ -43,26 +43,28 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
   // Enhanced cursor filtering and deduplication
   useEffect(() => {
     const now = Date.now();
-    const fiveSecondsAgo = now - 5000; // 5 seconds timeout
+    const tenSecondsAgo = now - 10000; // 10 seconds timeout for better visibility
     
-    // Enhanced deduplication - prevent duplicate cursors
+    // Aggressive deduplication - prevent ALL duplicate cursors
     const cursorMap = new Map<string, CursorData>();
     
     cursors.forEach(cursor => {
-      // Skip invalid cursors
+      // Skip invalid cursors and current user
       if (!cursor.userId || !cursor.username || 
           cursor.userId === 'current_user' || 
-          cursor.username === 'current_user') {
+          cursor.username === 'current_user' ||
+          cursor.userId.trim() === '' ||
+          cursor.username.trim() === '') {
         return;
       }
       
       const lastSeenTime = new Date(cursor.lastSeen).getTime();
       
       // Only show recent cursors
-      if (lastSeenTime > fiveSecondsAgo) {
+      if (lastSeenTime > tenSecondsAgo) {
         const existing = cursorMap.get(cursor.userId);
         
-        // Keep the most recent cursor for each user (prevent duplicates)
+        // Keep ONLY the most recent cursor for each user
         if (!existing || lastSeenTime > new Date(existing.lastSeen).getTime()) {
           cursorMap.set(cursor.userId, {
             ...cursor,
@@ -76,7 +78,18 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
       }
     });
     
-    setVisibleCursors(Array.from(cursorMap.values()));
+    // Final check: remove any cursors that might be duplicates by username
+    const finalCursors = Array.from(cursorMap.values());
+    const uniqueByUsername = new Map<string, CursorData>();
+    
+    finalCursors.forEach(cursor => {
+      const existing = uniqueByUsername.get(cursor.username);
+      if (!existing || new Date(cursor.lastSeen).getTime() > new Date(existing.lastSeen).getTime()) {
+        uniqueByUsername.set(cursor.username, cursor);
+      }
+    });
+    
+    setVisibleCursors(Array.from(uniqueByUsername.values()));
   }, [cursors]);
 
   return (

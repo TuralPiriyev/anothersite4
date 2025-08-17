@@ -33,21 +33,27 @@ const MainLayout: React.FC = () => {
               data.userId.trim().length > 0 &&
               data.username &&
               typeof data.username === 'string' &&
+              data.username.trim().length > 0 &&
               data.userId !== 'current_user' &&
               data.username !== 'current_user') { // Never show own cursor
             
             const now = Date.now();
             // Aggressive throttling to prevent duplicate cursors
-            if (now - cursorUpdateThrottle < 200) return; // Max 5 updates per second
+            if (now - cursorUpdateThrottle < 500) return; // Max 2 updates per second
             setCursorUpdateThrottle(now);
             
             setCollaborativeCursors(prev => {
-              // Enhanced deduplication: remove ALL existing cursors for this user
-              const filteredCursors = prev.filter(c => 
+              // AGGRESSIVE deduplication: remove ALL existing cursors for this user AND username
+              let filteredCursors = prev.filter(c => 
                 c.userId !== data.userId && 
                 c.username !== data.username &&
                 c.userId !== 'current_user' &&
                 c.username !== 'current_user'
+              );
+              
+              // Additional check: remove any cursor with similar username (case insensitive)
+              filteredCursors = filteredCursors.filter(c => 
+                c.username.toLowerCase() !== data.username.toLowerCase()
               );
               
               const newCursor = {

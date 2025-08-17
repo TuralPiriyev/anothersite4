@@ -343,7 +343,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     
     // Save to MongoDB via API
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/invitations`, {
+      const apiUrl = import.meta.env.VITE_API_BASE_URL || 
+                    (window.location.hostname === 'localhost' ? 'http://localhost:5000' : window.location.origin);
+      
+      const response = await fetch(`${apiUrl}/api/invitations`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
