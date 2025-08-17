@@ -43,24 +43,26 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
   // Enhanced cursor filtering and deduplication
   useEffect(() => {
     const now = Date.now();
-    const threeSecondsAgo = now - 3000; // Reduced timeout for better responsiveness
+    const fiveSecondsAgo = now - 5000; // 5 seconds timeout
     
-    // Advanced deduplication and filtering
+    // Enhanced deduplication - prevent duplicate cursors
     const cursorMap = new Map<string, CursorData>();
     
     cursors.forEach(cursor => {
       // Skip invalid cursors
-      if (!cursor.userId || !cursor.username || cursor.userId === 'current_user') {
+      if (!cursor.userId || !cursor.username || 
+          cursor.userId === 'current_user' || 
+          cursor.username === 'current_user') {
         return;
       }
       
       const lastSeenTime = new Date(cursor.lastSeen).getTime();
       
       // Only show recent cursors
-      if (lastSeenTime > threeSecondsAgo) {
+      if (lastSeenTime > fiveSecondsAgo) {
         const existing = cursorMap.get(cursor.userId);
         
-        // Keep the most recent cursor for each user
+        // Keep the most recent cursor for each user (prevent duplicates)
         if (!existing || lastSeenTime > new Date(existing.lastSeen).getTime()) {
           cursorMap.set(cursor.userId, {
             ...cursor,
@@ -96,17 +98,17 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
               style={{ color: cursor.color }}
             />
             
-            {/* Username Label - Always visible */}
+            {/* Username Label - Always visible with better styling */}
             <div 
-              className="absolute top-6 left-2 px-2 py-1 rounded-md text-xs font-medium text-white shadow-lg whitespace-nowrap backdrop-blur-sm border border-white/10"
+              className="absolute top-6 left-2 px-3 py-1 rounded-lg text-xs font-bold text-white shadow-xl whitespace-nowrap backdrop-blur-sm border border-white/20"
               style={{ backgroundColor: cursor.color }}
             >
               {cursor.username}
             </div>
 
-            {/* Subtle pulse animation */}
+            {/* Subtle pulse animation - reduced opacity to prevent visual noise */}
             <div 
-              className="absolute w-3 h-3 rounded-full animate-ping opacity-20"
+              className="absolute w-2 h-2 rounded-full animate-ping opacity-10"
               style={{ 
                 backgroundColor: cursor.color,
                 top: '50%',

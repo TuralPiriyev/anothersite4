@@ -343,7 +343,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     
     // Save to MongoDB via API
     try {
-      const response = await fetch('/api/invitations', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/invitations`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -363,7 +363,8 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       if (response.ok) {
         console.log('✅ Invitation saved to server successfully');
       } else {
-        console.warn('⚠️ Failed to save invitation to server, but continuing with local state');
+        const errorData = await response.json().catch(() => ({}));
+        console.warn('⚠️ Failed to save invitation to server:', response.status, errorData);
       }
     } catch (error) {
       console.warn('⚠️ Network error saving invitation, but continuing with local state:', error);
@@ -440,6 +441,14 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         isShared: true,
         updatedAt: new Date()
       }));
+      
+      // Save member to MongoDB
+      try {
+        await mongoService.saveWorkspaceMember(newMember, currentSchema.id);
+        console.log('✅ Member saved to MongoDB successfully');
+      } catch (error) {
+        console.warn('⚠️ Failed to save member to MongoDB:', error);
+      }
       
       console.log('Local state updated successfully');
       return true;
