@@ -1,478 +1,247 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  Users, Wifi, WifiOff, MousePointer, Eye, Edit, Crown, 
-  Settings, Shield, Activity, Send, UserPlus, Copy, Check, X, Clock, Globe, Lock, AlertCircle
+  Users, Send, UserPlus, Copy, Check, AlertCircle, 
+  Crown, Shield, Eye, Edit, Database, Loader, X,
+  Wifi, WifiOff, RefreshCw
 } from 'lucide-react';
 import { useSubscription } from '../../../context/SubscriptionContext';
 import { useDatabase } from '../../../context/DatabaseContext';
-import { collaborationService, CollaborationUser } from '../../../services/collaborationService';
+import { collaborationService } from '../../../services/collaborationService';
 import { mongoService } from '../../../services/mongoService';
-import api from '../../../utils/api';
+import CollaborationStatus from './CollaborationStatus';
 
- const getRoleBadgeColor = (role: CollaboratorPresence['role']): string => {
-  switch (role) {
-
-    case 'admin':  return 'bg-purple-100 text-purple-800';
-    case 'editor': return 'bg-blue-100   text-blue-800';
-    case 'viewer': return 'bg-gray-100   text-gray-800';
-    default:       return 'bg-gray-100   text-gray-800';
-  }
-};
-interface CollaboratorCursor {
-  userId: string;
-  username: string;
-  position: { x: number; y: number };
-  selection?: {
-    tableId: string;
-    columnId?: string;
-  };
-  color: string;
-  lastSeen: Date;
-}
-
-interface CollaborationStatus {
-  isConnected: boolean;
-  lastSync: string;
-  activeUsers: number;
-}
-interface CollaboratorPresence {
-  userId: string;
-  username: string;
-  role: 'owner' | 'admin' | 'editor' | 'viewer';
-  status: 'online' | 'away' | 'offline';
-  currentAction?: string;
-  joinedAt: Date;
-  avatar?: string;
-}
-
-interface RealtimeEvent {
+interface TeamMember {
   id: string;
-  type: 'table_created' | 'table_updated' | 'table_deleted' | 'relationship_added' | 'user_joined' | 'user_left';
-  userId: string;
   username: string;
-  timestamp: string;
-  data: any;
+  role: 'owner' | 'editor' | 'viewer';
+  joinedAt: Date;
+  isOnline?: boolean;
+  color?: string;
+}
+
+interface DatabaseOption {
+  id: string;
+  name: string;
+  tablesCount: number;
+  lastModified: Date;
 }
 
 const RealTimeCollaboration: React.FC = () => {
-  const { currentPlan } = useSubscription();
-  const { 
-    currentSchema, 
-    inviteToWorkspace,
-    acceptWorkspaceInvitation,
-    removeWorkspaceMember,
-    syncWorkspaceWithMongoDB,
-    addTable,
-    updateTable,
-    removeTable
-  } = useDatabase();
+  const { canUseFeature, setShowUpgradeModal, setUpgradeReason } = useSubscription();
+  const { currentSchema, schemas, importSchema } = useDatabase();
   
-const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStatus>({
-  isConnected: false,
-  lastSync: new Date().toISOString(),
-  activeUsers: 0
-});
-
+  // State management
+  const [activeTab, setActiveTab] = useState<'send' | 'accept' | 'members'>('send');
   const [isConnected, setIsConnected] = useState(false);
-  const [collaborators, setCollaborators] = useState<CollaboratorPresence[]>([]);
-  const [cursors, setCursors] = useState<CollaboratorCursor[]>([]);
-  const [realtimeEvents, setRealtimeEvents] = useState<RealtimeEvent[]>([]);
-  const [showPresencePanel, setShowPresencePanel] = useState(true);
-  const [connectionQuality, setConnectionQuality] = useState<'excellent' | 'good' | 'poor'>('excellent');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   
-  // State for invitation form
+  // Send invitation state
   const [inviteUsername, setInviteUsername] = useState('');
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer'>('editor');
-  const [isInviting, setIsInviting] = useState(false);
-  const [inviteError, setInviteError] = useState('');
-  const [inviteSuccess, setInviteSuccess] = useState('');
-  const [generatedCode, setGeneratedCode] = useState('');
+  const [selectedDatabase, setSelectedDatabase] = useState<string>('');
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [isValidatingUser, setIsValidatingUser] = useState(false);
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState(false);
   
-  // State for accepting invitations
+  // Accept invitation state
   const [joinCode, setJoinCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
-  const [joinError, setJoinError] = useState('');
-  const [joinSuccess, setJoinSuccess] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinSuccess, setJoinSuccess] = useState(false);
   
-  // State for active tab
-  const [activeTab, setActiveTab] = useState<'invite' | 'accept' | 'members'>('invite');
-  
-  // State for copied code feedback
-  const [copiedCode, setCopiedCode] = useState('');
-  
-  // Monitor collaboration service status (don't create new connection)
-  useEffect(() => {
-    if (currentPlan !== 'ultimate' || !currentSchema?.id) {
-      setIsConnected(false);
-      // Dispatch disconnection event to MainLayout
-      window.dispatchEvent(new CustomEvent('collaboration-event', {
-        detail: { type: 'connection_status', data: { connected: false } }
-      }));
-      return;
-    }
+  // Team members state
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
 
-    // Initialize collaboration service for this component
+  // Available databases for selection
+  const availableDatabases: DatabaseOption[] = schemas.map(schema => ({
+    id: schema.id,
+    name: schema.name,
+    tablesCount: schema.tables.length,
+    lastModified: schema.updatedAt
+  }));
+
+  // Check if user can use collaboration
+  const canUseCollaboration = canUseFeature('canUseAdvancedSecurity');
+
+  // Initialize collaboration service
+  useEffect(() => {
+    if (!canUseCollaboration) return;
+
     const initializeCollaboration = async () => {
       try {
-        // Create a demo user for collaboration
-        const demoUser: CollaborationUser = {
-          id: `user_${Date.now()}`,
-          username: `user_${Math.random().toString(36).substr(2, 8)}`,
-          role: 'editor',
-          color: `hsl(${Math.random() * 360}, 70%, 50%)`
+        const currentUser = {
+          id: 'current_user',
+          username: 'current_user', // In real app, get from auth context
+          role: 'owner' as const,
+          color: '#3B82F6'
         };
 
-        // Initialize and connect collaboration service
-        collaborationService.initialize(demoUser, currentSchema.id);
-
-        // Set up event handlers for this component's state
-        const handleConnected = () => {
+        collaborationService.initialize(currentUser, currentSchema.id);
+        
+        // Set up event listeners
+        collaborationService.on('connected', () => {
           setIsConnected(true);
-          setConnectionQuality('excellent');
-          setCollaborationStatus(prev => ({
-            ...prev,
-            isConnected: true,
-            lastSync: new Date().toISOString()
-          }));
-          
-          // Dispatch connection event to MainLayout
-          window.dispatchEvent(new CustomEvent('collaboration-event', {
-            detail: { type: 'connection_status', data: { connected: true } }
-          }));
-        };
+          setConnectionError(null);
+          loadTeamMembers();
+        });
 
-        const handleDisconnected = () => {
+        collaborationService.on('disconnected', () => {
           setIsConnected(false);
-          setCollaborationStatus(prev => ({ ...prev, isConnected: false }));
-          
-          // Dispatch disconnection event to MainLayout
-          window.dispatchEvent(new CustomEvent('collaboration-event', {
-            detail: { type: 'connection_status', data: { connected: false } }
-          }));
-        };
+        });
 
-        const handleUserJoined = (user: CollaborationUser) => {
-          console.log('👋 User joined collaboration:', user.username);
-          addRealtimeEvent('user_joined', user.id, user.username, user);
-          
-          setCollaborators(prev => {
-            const exists = prev.find(c => c.userId === user.id);
-            if (!exists) {
-              return [...prev, {
-                userId: user.id,
-                username: user.username,
-                role: user.role as any,
-                status: 'online' as const,
-                currentAction: 'Working on schema',
-                joinedAt: new Date()
-              }];
-            }
-            return prev;
-          });
-        };
+        collaborationService.on('error', (error: any) => {
+          setConnectionError(error.message || 'Connection failed');
+        });
 
-        const handleUserLeft = (userId: string) => {
-          console.log('👋 User left collaboration:', userId);
-          setCollaborators(prev => prev.filter(c => c.userId !== userId));
-          setCursors(prev => prev.filter(c => c.userId !== userId));
-          addRealtimeEvent('user_left', userId, 'User', {});
-          
-          // Dispatch user left event to MainLayout
-          window.dispatchEvent(new CustomEvent('collaboration-event', {
-            detail: { type: 'user_left', data: { userId } }
-          }));
-        };
+        collaborationService.on('user_joined', (user: any) => {
+          console.log('User joined:', user);
+          loadTeamMembers();
+        });
 
-        const handleCursorUpdate = (cursor: any) => {
-          if (cursor && 
-              typeof cursor === 'object' && 
-              cursor.userId && 
-              typeof cursor.userId === 'string' &&
-              cursor.userId !== demoUser.id) { // Don't process own cursor updates
-            setCursors(prev => {
-              const existing = prev.findIndex(c => c.userId === cursor.userId);
-              const cursorData = {
-                userId: cursor.userId,
-                username: cursor.username || 'Unknown',
-                position: cursor.position || { x: 0, y: 0 },
-                selection: cursor.selection,
-                color: cursor.color || '#3B82F6',
-                lastSeen: cursor.lastSeen || new Date().toISOString()
-              };
+        collaborationService.on('user_left', (userId: string) => {
+          console.log('User left:', userId);
+          setTeamMembers(prev => prev.filter(member => member.id !== userId));
+        });
 
-              if (existing >= 0) {
-                const updated = [...prev];
-                updated[existing] = cursorData;
-                return updated;
-              }
-              return [...prev, cursorData];
-            });
-            
-            // Dispatch cursor update event to MainLayout
-            window.dispatchEvent(new CustomEvent('collaboration-event', {
-              detail: { type: 'cursor_update', data: cursor }
-            }));
-          } else {
-            // Reduced logging to prevent spam
-          }
-        };
-
-        const handleSchemaChange = (message: any) => {
-          console.log('🔄 Schema change received:', message);
-          handleSchemaChangeEvent(message);
-          addRealtimeEvent(message.changeType, message.userId, message.username || 'User', message.data);
-        };
-
-        const handleError = (error: any) => {
-          console.error('❌ Collaboration error:', error);
-          setConnectionQuality('poor');
-        };
-
-        // Register event handlers
-        collaborationService.on('connected', handleConnected);
-        collaborationService.on('disconnected', handleDisconnected);
-        collaborationService.on('user_joined', handleUserJoined);
-        collaborationService.on('user_left', handleUserLeft);
-        collaborationService.on('cursor_update', handleCursorUpdate);
-        collaborationService.on('schema_change', handleSchemaChange);
-        collaborationService.on('error', handleError);
-
-        // Connect to collaboration service
+        // Connect to collaboration
         await collaborationService.connect();
-
-        // Cleanup
-        return () => {
-          collaborationService.off('connected', handleConnected);
-          collaborationService.off('disconnected', handleDisconnected);
-          collaborationService.off('user_joined', handleUserJoined);
-          collaborationService.off('user_left', handleUserLeft);
-          collaborationService.off('cursor_update', handleCursorUpdate);
-          collaborationService.off('schema_change', handleSchemaChange);
-          collaborationService.off('error', handleError);
-          collaborationService.disconnect();
-        };
-
+        
       } catch (error) {
         console.error('Failed to initialize collaboration:', error);
-        setIsConnected(false);
-        setConnectionQuality('poor');
-        
-        // Dispatch error connection event to MainLayout
-        window.dispatchEvent(new CustomEvent('collaboration-event', {
-          detail: { type: 'connection_status', data: { connected: false } }
-        }));
+        setConnectionError('Failed to connect to collaboration service');
       }
     };
 
-    // Small delay to prevent connection spam
-    const timeoutId = setTimeout(initializeCollaboration, 500);
+    initializeCollaboration();
 
     return () => {
-      clearTimeout(timeoutId);
+      collaborationService.disconnect();
     };
-  }, [currentPlan, currentSchema?.id]);
+  }, [canUseCollaboration, currentSchema.id]);
 
-  // Listen for cursor move events from MainLayout
-  useEffect(() => {
-    const handleCursorMove = (event: CustomEvent) => {
-      const { position } = event.detail;
-      // Throttle cursor updates and don't send if position hasn't changed significantly
-      if (position && isConnected && collaborationService.isConnectedState()) {
-        const now = Date.now();
-        const timeSinceLastUpdate = now - (handleCursorMove.lastUpdate || 0);
-        
-        // Only send cursor updates every 100ms to prevent spam
-        if (timeSinceLastUpdate > 100) {
-          handleCursorMove.lastUpdate = now;
-          collaborationService.sendCursorUpdate(position);
-        }
+  // Load team members
+  const loadTeamMembers = useCallback(async () => {
+    if (!canUseCollaboration) return;
+    
+    setIsLoadingMembers(true);
+    try {
+      // Load from current schema members
+      const schemaMembers: TeamMember[] = currentSchema.members.map(member => ({
+        id: member.id,
+        username: member.username,
+        role: member.role,
+        joinedAt: member.joinedAt,
+        isOnline: member.username === 'current_user', // Current user is always online
+        color: generateUserColor(member.username)
+      }));
+
+      // Load additional members from MongoDB if available
+      try {
+        const mongoMembers = await mongoService.getWorkspaceMembers(currentSchema.id);
+        mongoMembers.forEach(mongoMember => {
+          const exists = schemaMembers.find(m => m.username === mongoMember.username);
+          if (!exists) {
+            schemaMembers.push({
+              id: mongoMember.id,
+              username: mongoMember.username,
+              role: mongoMember.role,
+              joinedAt: mongoMember.joinedAt,
+              isOnline: false,
+              color: generateUserColor(mongoMember.username)
+            });
+          }
+        });
+      } catch (error) {
+        console.warn('Could not load members from MongoDB:', error);
       }
-    };
 
-
-  // Enhanced member management with real-time updates
-  useEffect(() => {
-    const updateTeamMembers = async () => {
-      if (currentPlan === 'ultimate' && currentSchema.isShared) {
-        try {
-          // Fetch latest members from MongoDB
-          const members = await mongoService.getWorkspaceMembers(currentSchema.id);
-          const invitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
-          
-          // Update collaborators state with real members
-          setCollaborators(members.map(member => ({
-            userId: member.id,
-            username: member.username,
-            role: member.role as 'admin' | 'editor' | 'viewer',
-            status: 'online' as const,
-            currentAction: 'Working on schema',
-            joinedAt: member.joinedAt
-          })));
-          
-          // Update schema with fresh data
-          setCurrentSchema(prev => ({
-            ...prev,
-            members: members,
-            invitations: invitations
-          }));
-          
-        } catch (error) {
-          console.error('Failed to update team members:', error);
-        }
-      }
-    };
-
-    // Update team members when component mounts and periodically
-    updateTeamMembers();
-    const interval = setInterval(updateTeamMembers, 15000); // Every 15 seconds
-
-    return () => clearInterval(interval);
-  }, [currentPlan, currentSchema.isShared, currentSchema.id]);
-
-  // Handle successful invitation acceptance
-  useEffect(() => {
-    const handleInvitationAccepted = async () => {
-      if (joinSuccess) {
-        // Refresh team members after successful join
-        try {
-          const members = await mongoService.getWorkspaceMembers(currentSchema.id);
-          setCollaborators(members.map(member => ({
-            userId: member.id,
-            username: member.username,
-            role: member.role as 'admin' | 'editor' | 'viewer',
-            status: 'online' as const,
-            currentAction: 'Just joined',
-            joinedAt: member.joinedAt
-          })));
-        } catch (error) {
-          console.error('Failed to refresh members after join:', error);
-        }
-      }
-    };
-
-    if (joinSuccess) {
-      handleInvitationAccepted();
+      setTeamMembers(schemaMembers);
+    } catch (error) {
+      console.error('Failed to load team members:', error);
+    } finally {
+      setIsLoadingMembers(false);
     }
-  }, [joinSuccess, currentSchema.id]);
+  }, [canUseCollaboration, currentSchema.id, currentSchema.members]);
 
-  // Handle successful invitation sending
-  useEffect(() => {
-    const handleInvitationSent = async () => {
-      if (inviteSuccess && generatedCode) {
-        // Refresh invitations list
-        try {
-          const invitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
-          setCurrentSchema(prev => ({
-            ...prev,
-            invitations: invitations,
-            isShared: true
-          }));
-        } catch (error) {
-          console.error('Failed to refresh invitations:', error);
-        }
-      }
-    };
+  // Generate consistent user color
+  const generateUserColor = (username: string): string => {
+    const colors = [
+      '#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6',
+      '#06B6D4', '#84CC16', '#F97316', '#EC4899', '#6366F1'
+    ];
+    const hash = username.split('').reduce((a, b) => {
+      a = ((a << 5) - a) + b.charCodeAt(0);
+      return a & a;
+    }, 0);
+    return colors[Math.abs(hash) % colors.length];
+  };
 
-    if (inviteSuccess && generatedCode) {
-      handleInvitationSent();
-    }
-      const fiveSecondsAgo = now - 5000;
-
-      setCollaborativeCursors(prev => 
-        prev.filter(cursor => {
-          const lastSeenTime = new Date(cursor.lastSeen).getTime();
-          return lastSeenTime > fiveSecondsAgo;
-        })
-      );
-    }, 2000); // Clean up every 2 seconds
-
-    window.addEventListener('cursor-move', handleCursorMove as EventListener);
-
-    return () => {
-      window.removeEventListener('cursor-move', handleCursorMove as EventListener);
-    };
-  }, [isConnected]);
-
-  // Real database collaboration functions
+  // Send invitation
   const handleSendInvitation = async () => {
-    if (!inviteUsername.trim()) {
-      setInviteError('Please enter a username');
+    if (!inviteUsername.trim() || !selectedDatabase) {
+      setInviteError('Please enter username and select a database');
       return;
     }
 
-    setIsInviting(true);
-    setInviteError('');
-    setInviteSuccess('');
+    setIsSendingInvite(true);
+    setInviteError(null);
+    setInviteSuccess(false);
 
     try {
-      // Validate username against real database
-      const response = await api.post('/users/validate', { username: inviteUsername });
-      
-      if (!response.data.exists) {
-        setInviteError('User not found in our database.');
-        setIsInviting(false);
+      // Validate username exists
+      setIsValidatingUser(true);
+      const userExists = await mongoService.validateUsername(inviteUsername.trim());
+      setIsValidatingUser(false);
+
+      if (!userExists) {
+        setInviteError('User not found. Please check the username.');
+        setIsSendingInvite(false);
         return;
       }
 
-      // Check if user is already invited or a member
-      const existingInvite = currentSchema.invitations.find(
-        inv => inv.inviteeUsername.toLowerCase() === inviteUsername.toLowerCase() && inv.status === 'pending'
+      // Check if user is already a member
+      const existingMember = teamMembers.find(
+        member => member.username.toLowerCase() === inviteUsername.trim().toLowerCase()
       );
-      const existingMember = currentSchema.members.find(
-        member => member.username.toLowerCase() === inviteUsername.toLowerCase()
-      );
-
-      if (existingInvite) {
-        setInviteError('User already has a pending invitation.');
-        setIsInviting(false);
-        return;
-      }
 
       if (existingMember) {
-        setInviteError('User is already a team member.');
-        setIsInviting(false);
+        setInviteError('User is already a team member');
+        setIsSendingInvite(false);
         return;
       }
 
-      // Generate join code
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let joinCode = '';
-      for (let i = 0; i < 8; i++) {
-        joinCode += chars.charAt(Math.floor(Math.random() * chars.length));
+      // Load selected database schema
+      const selectedSchema = schemas.find(s => s.id === selectedDatabase);
+      if (selectedSchema) {
+        importSchema(selectedSchema);
       }
 
-      // Save to real MongoDB
-      const invitationResponse = await api.post('/invitations', {
-        workspaceId: currentSchema.id,
+      // Create invitation
+      const joinCode = await currentSchema.inviteToWorkspace({
         inviterUsername: 'current_user',
-        inviteeUsername: inviteUsername,
-        role: inviteRole,
-        joinCode,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        status: 'pending'
+        inviteeUsername: inviteUsername.trim(),
+        role: inviteRole
       });
 
-      if (invitationResponse.data) {
-        setGeneratedCode(joinCode);
-        setInviteSuccess(`Invitation sent successfully! Share this join code with ${inviteUsername}:`);
-        
-        // Reset form
-        setInviteUsername('');
-        setInviteRole('editor');
-      } else {
-        setInviteError('Failed to create invitation. Please try again.');
-      }
+      setGeneratedCode(joinCode);
+      setInviteSuccess(true);
+      setInviteUsername('');
       
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.error || 'Failed to send invitation. Please try again.';
-      setInviteError(errorMessage);
-      console.error('Invitation error:', error);
+      // Refresh team members
+      loadTeamMembers();
+
+    } catch (error) {
+      console.error('Failed to send invitation:', error);
+      setInviteError('Failed to send invitation. Please try again.');
     } finally {
-      setIsInviting(false);
+      setIsSendingInvite(false);
     }
   };
 
+  // Accept invitation
   const handleAcceptInvitation = async () => {
     if (!joinCode.trim()) {
       setJoinError('Please enter a join code');
@@ -480,651 +249,508 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
     }
 
     setIsJoining(true);
-    setJoinError('');
-    setJoinSuccess('');
+    setJoinError(null);
+    setJoinSuccess(false);
 
     try {
-      // Validate join code with real database
-      const response = await api.post('/invitations/validate', { joinCode: joinCode.toUpperCase() });
+      const success = await currentSchema.acceptWorkspaceInvitation(joinCode.trim());
       
-      if (!response.data.valid) {
-        setJoinError(response.data.error || 'Invalid or expired code.');
-        setIsJoining(false);
-        return;
-      }
-
-      const invitation = response.data.invitation;
-      
-      // Update invitation status in database
-      await api.put(`/invitations/${invitation.id}`, { status: 'accepted' });
-
-      // Add member to database
-      const memberResponse = await api.post('/members', {
-        workspaceId: invitation.workspaceId,
-        id: crypto.randomUUID(),
-        username: invitation.inviteeUsername,
-        role: invitation.role,
-        joinedAt: new Date().toISOString()
-      });
-
-      if (memberResponse.data) {
-        setJoinSuccess(`Successfully joined the workspace! You now have ${invitation.role} access.`);
+      if (success) {
+        setJoinSuccess(true);
         setJoinCode('');
         
-        // Switch to members tab to show the new member
-        setTimeout(() => setActiveTab('members'), 2000);
+        // Switch to team members tab to show the updated team
+        setActiveTab('members');
+        
+        // Refresh team members
+        loadTeamMembers();
+        
+        // Broadcast join to other users
+        if (isConnected) {
+          collaborationService.sendSchemaChange({
+            type: 'table_updated',
+            data: { type: 'user_joined', username: 'current_user' },
+            userId: 'current_user',
+            timestamp: new Date()
+          });
+        }
       } else {
-        setJoinError('Failed to join workspace.');
+        setJoinError('Invalid or expired join code');
       }
-      
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.error || 'Failed to accept invitation. Please try again.';
-      setJoinError(errorMessage);
-      console.error('Join error:', error);
+    } catch (error) {
+      console.error('Failed to accept invitation:', error);
+      setJoinError('Failed to join workspace. Please try again.');
     } finally {
       setIsJoining(false);
     }
   };
 
-  // Enhanced copy function with feedback
-  const copyJoinCode = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopiedCode(code);
-      setTimeout(() => setCopiedCode(''), 2000);
-    } catch (error) {
-      console.error('Failed to copy code:', error);
-    }
-  };
-
-  // Enhanced member removal with real database sync
-  const removeMember = async (memberId: string) => {
-    const member = currentSchema.members.find(m => m.id === memberId);
-    if (!member) return;
-
-    if (confirm(`Are you sure you want to remove ${member.username} from the workspace?`)) {
-      removeWorkspaceMember(memberId);
-      
-      // Update real database
+  // Copy join code to clipboard
+  const copyJoinCode = async () => {
+    if (generatedCode) {
       try {
-        await api.delete(`/api/members/${memberId}`);
-        await syncWorkspaceWithMongoDB();
+        await navigator.clipboard.writeText(generatedCode);
       } catch (error) {
-        console.error('Failed to update database:', error);
+        console.error('Failed to copy to clipboard:', error);
       }
     }
   };
 
-  const handleSchemaChangeEvent = (message: any) => {
-    const { changeType, data } = message;
-    
-    switch (changeType) {
-      case 'table_created':
-        if (data.table) {
-          addTable(data.table);
-        }
-        break;
-      case 'table_updated':
-        if (data.tableId && data.updates) {
-          updateTable(data.tableId, data.updates);
-        }
-        break;
-      case 'table_deleted':
-        if (data.tableId) {
-          removeTable(data.tableId);
-        }
-        break;
-      case 'relationship_added':
-        // Handle relationship changes
-        break;
-    }
-    
-    // Sync with MongoDB
-    syncWorkspaceWithMongoDB();
+  // Refresh team members
+  const refreshMembers = () => {
+    loadTeamMembers();
   };
 
-  const addRealtimeEvent = (type: RealtimeEvent['type'], userId: string, username: string, data: any) => {
-    const event: RealtimeEvent = {
-      id: Date.now().toString(),
-      type,
-      userId,
-      username,
-      timestamp:  new Date().toISOString(),
-      data
-    };
-    
-    setRealtimeEvents(prev => [event, ...prev.slice(0, 49)]); // Keep last 50 events
-  };
-
-  const broadcastCursorPosition = (x: number, y: number, selection?: any) => {
-    if (isConnected && collaborationService.isConnectedState()) {
-      collaborationService.sendCursorUpdate({
-        x,
-        y,
-        tableId: selection?.tableId,
-        columnId: selection?.columnId
-      });
-    }
-  };
-  
-  const broadcastSchemaChange = (changeType: string, data: any) => {
-    if (isConnected && collaborationService.isConnectedState()) {
-      collaborationService.sendSchemaChange({
-        type: changeType as any,
-        data,
-        userId: 'current_user',
-        timestamp: new Date()
-      });
-    }
-  };
-
- 
-
-  // Real-time workspace synchronization
+  // Load team members on mount
   useEffect(() => {
-    if (currentPlan === 'ultimate' && currentSchema.isShared) {
-      const syncInterval = setInterval(async () => {
-        try {
-          // Fetch latest workspace data from MongoDB
-          const workspaceMembers = await mongoService.getWorkspaceMembers(currentSchema.id);
-          const workspaceInvitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
-          
-          // Update local state with fresh data
-          setCollaborators(workspaceMembers.map(member => ({
-            userId: member.id,
-            username: member.username,
-            role: member.role as 'admin' | 'editor' | 'viewer',
-            status: 'online' as const,
-            currentAction: 'Working on schema',
-            joinedAt: member.joinedAt
-          })));
-          
-         setCollaborationStatus(prev => ({
-  ...prev,
-  isConnected: true,
-  lastSync: new Date().toISOString(),
-  activeUsers: workspaceMembers.length
-}));
-        } catch (error) {
-          console.error('Failed to sync workspace:', error);
-          setCollaborationStatus(prev => ({
-            ...prev,
-            isConnected: false
-          }));
-        }
-      }, 10000); // Sync every 10 seconds
-
-      return () => clearInterval(syncInterval);
+    if (canUseCollaboration) {
+      loadTeamMembers();
     }
-  }, [currentPlan, currentSchema.isShared, currentSchema.id]);
+  }, [canUseCollaboration, loadTeamMembers]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'online': return 'bg-green-500';
-      case 'away': return 'bg-yellow-500';
-      case 'offline': return 'bg-gray-500';
-      default: return 'bg-gray-500';
-    }
-  };
-
-  const getRoleIcon = (role: string) => {
-    switch (role) {
-      case 'admin': return <Crown className="w-4 h-4 text-purple-500" />;
-      case 'editor': return <Edit className="w-4 h-4 text-blue-500" />;
-      case 'viewer': return <Eye className="w-4 h-4 text-gray-500" />;
-      default: return <Users className="w-4 h-4 text-gray-500" />;
-    }
-  };
-
-  const getEventIcon = (type: string) => {
-    switch (type) {
-      case 'table_created': return '🆕';
-      case 'table_updated': return '✏️';
-      case 'table_deleted': return '🗑️';
-      case 'relationship_added': return '🔗';
-      case 'user_joined': return '👋';
-      case 'user_left': return '👋';
-      default: return '📝';
-    }
-  };
-
-  const formatEventMessage = (event: RealtimeEvent) => {
-    switch (event.type) {
-      case 'table_created':
-        return `created table "${event.data.tableName}"`;
-      case 'table_updated':
-        return `updated table "${event.data.tableName}"`;
-      case 'table_deleted':
-        return `deleted table "${event.data.tableName}"`;
-      case 'relationship_added':
-        return `added relationship ${event.data.source} → ${event.data.target}`;
-      case 'user_joined':
-        return 'joined the workspace';
-      case 'user_left':
-        return 'left the workspace';
-      default:
-        return 'performed an action';
-    }
-  };
-
-  // Only show for Ultimate plan users
-  if (currentPlan !== 'ultimate') {
+  // Show upgrade prompt for non-Ultimate users
+  if (!canUseCollaboration) {
     return (
-      <div className="h-full flex flex-col items-center justify-center p-8">
-        <div className="text-center max-w-md">
-          <div className="w-20 h-20 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/20 dark:to-pink-900/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Users className="w-10 h-10 text-purple-600 dark:text-purple-400" />
-          </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-3">
-            Real-Time Collaboration
-          </h3>
-          <p className="text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">
-            Live cursors, presence indicators, and real-time schema synchronization. Available exclusively in the Ultimate plan.
-          </p>
-          <button className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl font-medium transition-all duration-200 hover:scale-105 shadow-lg">
-            Upgrade to Ultimate
-          </button>
+      <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/20 rounded-full flex items-center justify-center mb-4">
+          <Users className="w-8 h-8 text-purple-600 dark:text-purple-400" />
         </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+          Real-Time Collaboration
+        </h3>
+        <p className="text-gray-600 dark:text-gray-400 mb-4 max-w-sm">
+          Team collaboration features are available in Ultimate plan. Work together in real-time on database schemas.
+        </p>
+        <button
+          onClick={() => {
+            setUpgradeReason('Real-time collaboration is available in Ultimate plan. Upgrade to work with your team in real-time.');
+            setShowUpgradeModal(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors duration-200"
+        >
+          <Crown className="w-4 h-4" />
+          Upgrade to Ultimate
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col p-4">
+    <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Real-Time Collaboration
-          </h3>
+      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
-            {/* Connection Status */}
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${
-              isConnected 
-                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-            }`}>
-              {isConnected ? (
-                <Wifi className="w-4 h-4" />
-              ) : (
-                <WifiOff className="w-4 h-4" />
-              )}
-              <span className="text-sm font-medium">
-                {isConnected ? 'Connected' : 'Disconnected'}
-              </span>
+            <div className="w-8 h-8 bg-purple-100 dark:bg-purple-900/20 rounded-full flex items-center justify-center">
+              <Users className="w-5 h-5 text-purple-600 dark:text-purple-400" />
             </div>
-            
-            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <Users className="w-4 h-4" />
-              <span>{collaborators.length} active</span>
+            <div>
+              <h3 className="font-medium text-gray-900 dark:text-white">
+                Real-Time Collaboration
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Work together on database schemas
+              </p>
             </div>
           </div>
+          <button
+            onClick={refreshMembers}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors duration-200"
+            title="Refresh team members"
+          >
+            <RefreshCw className="w-4 h-4 text-gray-500" />
+          </button>
         </div>
 
-        {/* Connection Quality */}
-        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-          <Activity className="w-4 h-4" />
-          <span>Connection quality: </span>
-          <span className={`font-medium ${
-            connectionQuality === 'excellent' ? 'text-green-600' :
-            connectionQuality === 'good' ? 'text-yellow-600' : 'text-red-600'
-          }`}>
-            {connectionQuality}
-          </span>
-        </div>
+        {/* Connection Status */}
+        <CollaborationStatus 
+          isConnected={isConnected} 
+          error={connectionError} 
+          showDetails={true}
+        />
+      </div>
 
-        {/* Enhanced Tabs */}
-        <div className="border-b border-gray-200 dark:border-gray-700 mt-6">
-          <nav className="flex space-x-8">
-            {[
-              { id: 'invite', name: 'Send Invitation', icon: UserPlus, color: 'text-blue-600 dark:text-blue-400' },
-              { id: 'accept', name: 'Accept Invitation', icon: Send, color: 'text-green-600 dark:text-green-400' },
-              { id: 'members', name: 'Team Members', icon: Users, color: 'text-purple-600 dark:text-purple-400' }
-            ].map(tab => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`
-                    flex items-center gap-2 py-3 px-1 border-b-2 font-medium text-sm transition-all duration-200
-                    ${activeTab === tab.id
-                      ? `border-purple-500 ${tab.color} bg-purple-50 dark:bg-purple-900/10 px-3 rounded-t-lg`
-                      : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 px-3 rounded-t-lg'
-                    }
-                  `}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.name}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
+      {/* Tabs */}
+      <div className="border-b border-gray-200 dark:border-gray-700">
+        <nav className="flex" aria-label="Collaboration tabs">
+          {[
+            { id: 'send', name: 'Send Invitation', icon: Send },
+            { id: 'accept', name: 'Accept Invitation', icon: UserPlus },
+            { id: 'members', name: 'Team Members', icon: Users }
+          ].map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`
+                  flex-1 flex items-center justify-center gap-2 py-3 px-4 text-sm font-medium border-b-2 transition-colors duration-200
+                  ${activeTab === tab.id
+                    ? 'border-purple-500 text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                  }
+                `}
+              >
+                <Icon className="w-4 h-4" />
+                <span className="hidden sm:inline">{tab.name}</span>
+              </button>
+            );
+          })}
+        </nav>
       </div>
 
       {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-4">
         {/* Send Invitation Tab */}
-        {activeTab === 'invite' && (
+        {activeTab === 'send' && (
           <div className="space-y-6">
-            {/* Team Creation Header */}
-            <div className="bg-gradient-to-r from-purple-100 to-blue-100 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl flex items-center justify-center">
-                  <Users className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    Team Collaboration Workspace
-                  </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Create and manage your collaborative database design team
-                  </p>
-                </div>
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Database className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="font-medium text-blue-800 dark:text-blue-200">Database Selection</span>
+              </div>
+              <p className="text-blue-700 dark:text-blue-300 text-sm mb-3">
+                Select which database schema to share with team members
+              </p>
+              <select
+                value={selectedDatabase}
+                onChange={(e) => setSelectedDatabase(e.target.value)}
+                className="w-full px-3 py-2 border border-blue-300 dark:border-blue-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Select a database to share</option>
+                {availableDatabases.map(db => (
+                  <option key={db.id} value={db.id}>
+                    {db.name} ({db.tablesCount} tables)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Username to Invite
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={inviteUsername}
+                  onChange={(e) => {
+                    setInviteUsername(e.target.value);
+                    setInviteError(null);
+                    setInviteSuccess(false);
+                    setGeneratedCode(null);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  placeholder="Enter username to invite"
+                />
+                {isValidatingUser && (
+                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                    <Loader className="w-4 h-4 animate-spin text-gray-400" />
+                  </div>
+                )}
               </div>
             </div>
-            
-            <div className="bg-gradient-to-br from-white to-blue-50 dark:from-gray-800 dark:to-blue-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
-                  <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                </div>
-                <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  Invite New Team Member
-                </h4>
-              </div>
-              
-              <div className="space-y-5">
-                {/* Username Input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Username
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={inviteUsername}
-                      onChange={(e) => setInviteUsername(e.target.value)}
-                      className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-200"
-                      placeholder="Enter username to invite"
-                      disabled={isInviting}
-                    />
-                    {isInviting && (
-                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                        <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-                      </div>
-                    )}
-                  </div>
-                </div>
 
-                {/* Role Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Role & Permissions
-                  </label>
-                  <div className="grid grid-cols-1 gap-3">
-                    {[
-                      { value: 'editor', label: 'Editor', desc: 'Can modify tables, data, and workspace settings', icon: '✏️' },
-                      { value: 'viewer', label: 'Viewer', desc: 'Can only view the workspace, no editing permissions', icon: '👁️' }
-                    ].map(role => (
-                      <label key={role.value} className="relative">
-                        <input
-                          type="radio"
-                          name="role"
-                          value={role.value}
-                          checked={inviteRole === role.value}
-                          onChange={(e) => setInviteRole(e.target.value as 'editor' | 'viewer')}
-                          className="sr-only"
-                          disabled={isInviting}
-                        />
-                        <div className={`
-                          p-4 border-2 rounded-xl cursor-pointer transition-all duration-200
-                          ${inviteRole === role.value
-                            ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                          }
-                        `}>
-                          <div className="flex items-start gap-3">
-                            <span className="text-lg">{role.icon}</span>
-                            <div className="flex-1">
-                              <div className="font-medium text-gray-900 dark:text-white">{role.label}</div>
-                              <div className="text-sm text-gray-500 dark:text-gray-400">{role.desc}</div>
-                            </div>
-                            {inviteRole === role.value && (
-                              <Check className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                            )}
-                          </div>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Send Button */}
-                <button
-                  onClick={handleSendInvitation}
-                  disabled={isInviting || !inviteUsername.trim()}
-                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:shadow-none hover:scale-[1.02] disabled:scale-100"
-                >
-                  {isInviting ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Validating User...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-5 h-5" />
-                      Send Invitation
-                    </>
-                  )}
-                </button>
-
-                {/* Error Message */}
-                {inviteError && (
-                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Role & Permissions
+              </label>
+              <div className="space-y-3">
+                <label className={`
+                  flex items-start gap-3 p-4 border-2 rounded-lg cursor-pointer transition-all duration-200
+                  ${inviteRole === 'editor' 
+                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' 
+                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                  }
+                `}>
+                  <input
+                    type="radio"
+                    name="role"
+                    value="editor"
+                    checked={inviteRole === 'editor'}
+                    onChange={(e) => setInviteRole(e.target.value as 'editor')}
+                    className="mt-1 text-purple-600 focus:ring-purple-500"
+                  />
+                  <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
-                      <p className="text-red-800 dark:text-red-200 text-sm font-medium">Error</p>
+                      <Edit className="w-4 h-4 text-purple-600" />
+                      <span className="font-medium text-gray-900 dark:text-white">Editor</span>
+                      {inviteRole === 'editor' && <Check className="w-4 h-4 text-purple-600" />}
                     </div>
-                    <p className="text-red-700 dark:text-red-300 text-sm mt-1">{inviteError}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      Can modify tables, data, and workspace settings
+                    </p>
                   </div>
-                )}
+                </label>
 
-                {/* Success Message */}
-                {inviteSuccess && (
-                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
-                      <p className="text-green-800 dark:text-green-200 text-sm font-medium">Success!</p>
+                <label className={`
+                  flex items-start gap-3 p-4 border-2 rounded-lg cursor-pointer transition-all duration-200
+                  ${inviteRole === 'viewer' 
+                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' 
+                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                  }
+                `}>
+                  <input
+                    type="radio"
+                    name="role"
+                    value="viewer"
+                    checked={inviteRole === 'viewer'}
+                    onChange={(e) => setInviteRole(e.target.value as 'viewer')}
+                    className="mt-1 text-purple-600 focus:ring-purple-500"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <Eye className="w-4 h-4 text-gray-600" />
+                      <span className="font-medium text-gray-900 dark:text-white">Viewer</span>
+                      {inviteRole === 'viewer' && <Check className="w-4 h-4 text-purple-600" />}
                     </div>
-                    <p className="text-green-700 dark:text-green-300 text-sm mb-3">{inviteSuccess}</p>
-                    {generatedCode && (
-                      <div className="bg-green-100 dark:bg-green-800/20 rounded-lg p-3">
-                        <div className="flex items-center justify-between">
-                          <code className="text-lg font-mono font-bold text-green-800 dark:text-green-200">
-                            {generatedCode}
-                          </code>
-                          <button
-                            onClick={() => copyJoinCode(generatedCode)}
-                            className="p-2 text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200 hover:bg-green-200 dark:hover:bg-green-700/20 rounded-lg transition-colors duration-200"
-                            title="Copy join code"
-                          >
-                            {copiedCode === generatedCode ? (
-                              <Check className="w-4 h-4" />
-                            ) : (
-                              <Copy className="w-4 h-4" />
-                            )}
-                          </button>
-                        </div>
-                        <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                          Code expires in 24 hours
-                        </p>
-                        <div className="mt-3 p-2 bg-green-200 dark:bg-green-700/20 rounded-md">
-                          <p className="text-xs text-green-800 dark:text-green-200 font-medium">
-                            📋 Share this code with {inviteUsername} to add them to your team
-                          </p>
-                        </div>
-                      </div>
-                    )}
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      Can only view the workspace, no editing permissions
+                    </p>
                   </div>
-                )}
+                </label>
               </div>
             </div>
+
+            {/* Error Display */}
+            {inviteError && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  <span className="text-red-800 dark:text-red-200 text-sm font-medium">Error</span>
+                </div>
+                <p className="text-red-700 dark:text-red-300 text-sm mt-1">{inviteError}</p>
+              </div>
+            )}
+
+            {/* Success Display */}
+            {inviteSuccess && generatedCode && (
+              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  <span className="text-green-800 dark:text-green-200 text-sm font-medium">Invitation Sent!</span>
+                </div>
+                <p className="text-green-700 dark:text-green-300 text-sm mb-3">
+                  Share this code with <strong>{inviteUsername}</strong>:
+                </p>
+                <div className="flex items-center gap-2 p-3 bg-white dark:bg-gray-800 border border-green-300 dark:border-green-600 rounded-lg">
+                  <code className="flex-1 font-mono text-lg font-bold text-green-700 dark:text-green-300">
+                    {generatedCode}
+                  </code>
+                  <button
+                    onClick={copyJoinCode}
+                    className="p-2 hover:bg-green-100 dark:hover:bg-green-800 rounded-lg transition-colors duration-200"
+                    title="Copy to clipboard"
+                  >
+                    <Copy className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  </button>
+                </div>
+                <p className="text-green-600 dark:text-green-400 text-xs mt-2">
+                  Code expires in 24 hours
+                </p>
+              </div>
+            )}
+
+            {/* Send Button */}
+            <button
+              onClick={handleSendInvitation}
+              disabled={isSendingInvite || !inviteUsername.trim() || !selectedDatabase}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg transition-colors duration-200 font-medium"
+            >
+              {isSendingInvite ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  {isValidatingUser ? 'Validating user...' : 'Sending invitation...'}
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4" />
+                  Send Invitation
+                </>
+              )}
+            </button>
           </div>
         )}
 
         {/* Accept Invitation Tab */}
         {activeTab === 'accept' && (
           <div className="space-y-6">
-            <div className="bg-gradient-to-br from-white to-green-50 dark:from-gray-800 dark:to-green-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-8 h-8 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center">
-                  <Send className="w-4 h-4 text-green-600 dark:text-green-400" />
-                </div>
-                <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  Join a Workspace
-                </h4>
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="font-medium text-blue-800 dark:text-blue-200">Join a Team</span>
               </div>
-              
-              <div className="space-y-5">
-                {/* Join Code Input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Join Code
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={joinCode}
-                      onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                      className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-green-500 font-mono text-lg tracking-wider text-center transition-all duration-200"
-                      placeholder="XXXXXXXX"
-                      maxLength={8}
-                      disabled={isJoining}
-                    />
-                    {isJoining && (
-                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                        <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Join Button */}
-                <button
-                  onClick={handleAcceptInvitation}
-                  disabled={isJoining || !joinCode.trim() || joinCode.length !== 8}
-                  className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:shadow-none hover:scale-[1.02] disabled:scale-100"
-                >
-                  {isJoining ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Joining Workspace...
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-5 h-5" />
-                      Join Workspace
-                    </>
-                  )}
-                </button>
-
-                {/* Error/Success Messages */}
-                {joinError && (
-                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
-                      <p className="text-red-800 dark:text-red-200 text-sm font-medium">Error</p>
-                    </div>
-                    <p className="text-red-700 dark:text-red-300 text-sm mt-1">{joinError}</p>
-                  </div>
-                )}
-
-                {joinSuccess && (
-                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
-                    <div className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
-                      <p className="text-green-800 dark:text-green-200 text-sm font-medium">Welcome!</p>
-                    </div>
-                    <p className="text-green-700 dark:text-green-300 text-sm mt-1">{joinSuccess}</p>
-                    <div className="mt-3 p-2 bg-green-200 dark:bg-green-700/20 rounded-md">
-                      <p className="text-xs text-green-800 dark:text-green-200 font-medium">
-                        🎉 You are now part of the team! Check the Team Members tab to see all members.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <p className="text-blue-700 dark:text-blue-300 text-sm">
+                Enter the 8-character join code you received from a team owner
+              </p>
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Join Code
+              </label>
+              <input
+                type="text"
+                value={joinCode}
+                onChange={(e) => {
+                  setJoinCode(e.target.value.toUpperCase());
+                  setJoinError(null);
+                  setJoinSuccess(false);
+                }}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono text-center text-lg tracking-widest"
+                placeholder="XXXXXXXX"
+                maxLength={8}
+              />
+            </div>
+
+            {/* Error Display */}
+            {joinError && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  <span className="text-red-800 dark:text-red-200 text-sm font-medium">Error</span>
+                </div>
+                <p className="text-red-700 dark:text-red-300 text-sm mt-1">{joinError}</p>
+              </div>
+            )}
+
+            {/* Success Display */}
+            {joinSuccess && (
+              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                <div className="flex items-center gap-2">
+                  <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  <span className="text-green-800 dark:text-green-200 text-sm font-medium">Successfully Joined!</span>
+                </div>
+                <p className="text-green-700 dark:text-green-300 text-sm mt-1">
+                  You are now part of the team. Check the Team Members tab to see your teammates.
+                </p>
+              </div>
+            )}
+
+            {/* Join Button */}
+            <button
+              onClick={handleAcceptInvitation}
+              disabled={isJoining || joinCode.length !== 8}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg transition-colors duration-200 font-medium"
+            >
+              {isJoining ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  Joining workspace...
+                </>
+              ) : (
+                <>
+                  <UserPlus className="w-4 h-4" />
+                  Join Workspace
+                </>
+              )}
+            </button>
           </div>
         )}
 
         {/* Team Members Tab */}
         {activeTab === 'members' && (
-          <div className="space-y-6">
-            <div className="bg-gradient-to-br from-white to-purple-50 dark:from-gray-800 dark:to-purple-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-purple-100 dark:bg-purple-900/20 rounded-lg flex items-center justify-center">
-                    <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-md font-medium text-gray-900 dark:text-white">
+                Team Members ({teamMembers.length})
+              </h4>
+              <div className="flex items-center gap-2">
+                {isConnected ? (
+                  <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                    <Wifi className="w-4 h-4" />
+                    <span className="text-sm">Connected</span>
                   </div>
-                  <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    Team Members ({collaborators.length + currentSchema.members.length})
-                  </h4>
-                </div>
-                <button
-                  onClick={() => setActiveTab('invite')}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  Create Team
-                </button>
+                ) : (
+                  <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                    <WifiOff className="w-4 h-4" />
+                    <span className="text-sm">Offline</span>
+                  </div>
+                )}
               </div>
-              
+            </div>
+
+            {isLoadingMembers ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader className="w-6 h-6 animate-spin text-purple-600" />
+                <span className="ml-2 text-gray-600 dark:text-gray-400">Loading team members...</span>
+              </div>
+            ) : teamMembers.length === 0 ? (
+              <div className="text-center py-8">
+                <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500 dark:text-gray-400 mb-2">No team members yet</p>
+                <p className="text-sm text-gray-400">
+                  Send invitations to start collaborating
+                </p>
+              </div>
+            ) : (
               <div className="space-y-3">
-                {/* Current Schema Members */}
-                {currentSchema.members.map(member => (
-                  <div key={member.id} className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all duration-200">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/20 dark:to-pink-900/20 rounded-full flex items-center justify-center">
-                        {member.role === 'owner' ? (
-                          <Crown className="w-6 h-6 text-yellow-600 dark:text-yellow-400" />
-                        ) : (
-                          <Users className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-                        )}
+                {teamMembers.map(member => {
+                  const isOwner = member.role === 'owner';
+                  const isCurrentUser = member.username === 'current_user';
+                  
+                  return (
+                    <div
+                      key={member.id}
+                      className={`
+                        flex items-center gap-3 p-4 rounded-lg border transition-all duration-200
+                        ${isOwner 
+                          ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800' 
+                          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:shadow-md'
+                        }
+                      `}
+                    >
+                      {/* User Avatar */}
+                      <div 
+                        className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm"
+                        style={{ backgroundColor: member.color || generateUserColor(member.username) }}
+                      >
+                        {member.username.charAt(0).toUpperCase()}
                       </div>
-                      <div>
+
+                      {/* User Info */}
+                      <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="font-medium text-gray-900 dark:text-white">
+                          <span className="font-medium text-gray-900 dark:text-white">
                             {member.username}
-                          </p>
-                          {member.username === 'current_user' && (
-                            <span className="text-xs bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full">
-                              You
-                            </span>
+                            {isCurrentUser && <span className="text-sm text-gray-500"> (You)</span>}
+                          </span>
+                          {member.isOnline && (
+                            <div className="w-2 h-2 bg-green-500 rounded-full" title="Online" />
                           )}
-                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                            member.role === 'owner' 
-                              ? 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200'
-                              : member.role === 'admin'
-                              ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-800 dark:text-purple-200'
-                              : member.role === 'editor'
-                              ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200'
-                              : 'bg-gray-100 dark:bg-gray-900/20 text-gray-800 dark:text-gray-200'
-                          }`}>
-                            {member.role}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {isOwner ? (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-full text-xs font-medium">
+                              <Crown className="w-3 h-3" />
+                              Owner
+                            </div>
+                          ) : member.role === 'editor' ? (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200 rounded-full text-xs font-medium">
+                              <Edit className="w-3 h-3" />
+                              Editor
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-full text-xs font-medium">
+                              <Eye className="w-3 h-3" />
+                              Viewer
+                            </div>
+                          )}
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            Joined {member.joinedAt.toLocaleDateString()}
                           </span>
                         </div>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          Joined {member.joinedAt.toLocaleDateString()}
-                        </p>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {member.role !== 'owner' && member.username !== 'current_user' && (
+
+                      {/* Actions */}
+                      {isOwner && !isCurrentUser && (
                         <button
-                          onClick={() => removeMember(member.id)}
+                          onClick={() => {
+                            // Remove member functionality
+                            if (confirm(`Remove ${member.username} from the team?`)) {
+                              // Implementation would go here
+                            }
+                          }}
                           className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200"
                           title="Remove member"
                         >
@@ -1132,100 +758,34 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                         </button>
                       )}
                     </div>
-                  </div>
-                ))}
-                
-                {/* Active Collaborators */}
-                {collaborators.map(collaborator => (
-                  <div key={collaborator.userId} className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/10 dark:to-emerald-900/10 border border-green-200 dark:border-green-800 rounded-xl hover:shadow-md transition-all duration-200">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/20 rounded-full flex items-center justify-center relative">
-                        <Users className="w-6 h-6 text-green-600 dark:text-green-400" />
-                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full"></div>
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium text-gray-900 dark:text-white">
-                            {collaborator.username}
-                          </p>
-                          <span className="text-xs bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-200 px-2 py-1 rounded-full">
-                            Online
-                          </span>
-                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                            collaborator.role === 'admin'
-                              ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-800 dark:text-purple-200'
-                              : collaborator.role === 'editor'
-                              ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200'
-                              : 'bg-gray-100 dark:bg-gray-900/20 text-gray-800 dark:text-gray-200'
-                          }`}>
-                            {collaborator.role}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {collaborator.currentAction || 'Working on schema'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: collaborators.find(c => c.userId === collaborator.userId)?.status === 'online' ? '#10B981' : '#6B7280' }}
-                      ></div>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        Active now
-                      </span>
-                    </div>
-                  </div>
-                ))}
-                
-                {currentSchema.members.length === 0 && collaborators.length === 0 && (
-                  <div className="text-center py-8">
-                    <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500 dark:text-gray-400 mb-2">
-                      No team members yet
-                    </p>
-                    <p className="text-sm text-gray-400">
-                      Invite team members to start collaborating
-                    </p>
-                  </div>
-                )}
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Team Stats */}
+            <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <div className="text-center">
+                <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {teamMembers.filter(m => m.role === 'owner').length}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">Owners</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {teamMembers.filter(m => m.role === 'editor').length}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">Editors</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {teamMembers.filter(m => m.role === 'viewer').length}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">Viewers</div>
               </div>
             </div>
           </div>
         )}
-      </div>
-
-      {/* Collaboration Features */}
-      <div className="mt-6 grid grid-cols-1 gap-4">
-        <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/10 dark:to-emerald-900/10 border border-green-200 dark:border-green-800 rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Wifi className="w-4 h-4 text-green-600 dark:text-green-400" />
-            <span className="font-medium text-green-800 dark:text-green-200">Real-time Sync</span>
-          </div>
-          <div className="text-sm text-green-700 dark:text-green-300">
-            Changes sync instantly across all connected users
-          </div>
-        </div>
-        
-        <div className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/10 dark:to-cyan-900/10 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <MousePointer className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span className="font-medium text-blue-800 dark:text-blue-200">Live Cursors</span>
-          </div>
-          <div className="text-sm text-blue-700 dark:text-blue-300">
-            See where others are working in real-time
-          </div>
-        </div>
-        
-        <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/10 dark:to-pink-900/10 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-            <span className="font-medium text-purple-800 dark:text-purple-200">Secure Access</span>
-          </div>
-          <div className="text-sm text-purple-700 dark:text-purple-300">
-            Role-based permissions and encrypted connections
-          </div>
-        </div>
       </div>
     </div>
   );

@@ -22,47 +22,59 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
   cursors, 
   onCursorMove 
 }) => {
-  const [localCursor, setLocalCursor] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [visibleCursors, setVisibleCursors] = useState<CursorData[]>([]);
+  const [lastCursorUpdate, setLastCursorUpdate] = useState<number>(0);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      const newPosition = { x: e.clientX, y: e.clientY };
-      setLocalCursor(newPosition);
-      onCursorMove?.(newPosition);
+      // Throttle cursor updates to prevent spam
+      const now = Date.now();
+      if (now - lastCursorUpdate > 100) { // Max 10 updates per second
+        const newPosition = { x: e.clientX, y: e.clientY };
+        onCursorMove?.(newPosition);
+        setLastCursorUpdate(now);
+      }
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     return () => document.removeEventListener('mousemove', handleMouseMove);
-  }, [onCursorMove]);
+  }, [onCursorMove, lastCursorUpdate]);
 
-  // Filter and deduplicate cursors
+  // Enhanced cursor filtering and deduplication
   useEffect(() => {
     const now = Date.now();
-    const fiveSecondsAgo = now - 5000;
+    const threeSecondsAgo = now - 3000; // Reduced timeout for better responsiveness
     
-    // Remove old cursors and deduplicate by userId
-    const uniqueCursors = cursors.reduce((acc, cursor) => {
-      const lastSeenTime = new Date(cursor.lastSeen).getTime();
-      
-      // Only show cursors from last 5 seconds
-      if (lastSeenTime > fiveSecondsAgo) {
-        // Check if we already have a cursor for this user
-        const existingIndex = acc.findIndex(c => c.userId === cursor.userId);
-        if (existingIndex >= 0) {
-          // Keep the most recent one
-          if (lastSeenTime > new Date(acc[existingIndex].lastSeen).getTime()) {
-            acc[existingIndex] = cursor;
-          }
-        } else {
-          acc.push(cursor);
-        }
+    // Advanced deduplication and filtering
+    const cursorMap = new Map<string, CursorData>();
+    
+    cursors.forEach(cursor => {
+      // Skip invalid cursors
+      if (!cursor.userId || !cursor.username || cursor.userId === 'current_user') {
+        return;
       }
       
-      return acc;
-    }, [] as CursorData[]);
+      const lastSeenTime = new Date(cursor.lastSeen).getTime();
+      
+      // Only show recent cursors
+      if (lastSeenTime > threeSecondsAgo) {
+        const existing = cursorMap.get(cursor.userId);
+        
+        // Keep the most recent cursor for each user
+        if (!existing || lastSeenTime > new Date(existing.lastSeen).getTime()) {
+          cursorMap.set(cursor.userId, {
+            ...cursor,
+            // Ensure position is valid
+            position: {
+              x: Math.max(0, Math.min(cursor.position.x, window.innerWidth)),
+              y: Math.max(0, Math.min(cursor.position.y, window.innerHeight))
+            }
+          });
+        }
+      }
+    });
     
-    setVisibleCursors(uniqueCursors);
+    setVisibleCursors(Array.from(cursorMap.values()));
   }, [cursors]);
 
   return (
@@ -70,7 +82,7 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
       {visibleCursors.map(cursor => (
         <div
           key={cursor.userId}
-          className="absolute transition-all duration-200 ease-out pointer-events-none"
+          className="absolute transition-all duration-150 ease-out pointer-events-none"
           style={{
             left: cursor.position.x,
             top: cursor.position.y,
@@ -80,29 +92,21 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
           {/* Cursor Icon */}
           <div className="relative">
             <MousePointer 
-              className="w-6 h-6 drop-shadow-lg filter drop-shadow-md"
+              className="w-5 h-5 drop-shadow-lg"
               style={{ color: cursor.color }}
             />
             
-            {/* Enhanced Username Label */}
+            {/* Username Label - Always visible */}
             <div 
-              className="absolute top-7 left-3 px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow-xl whitespace-nowrap border border-white/20 backdrop-blur-sm"
+              className="absolute top-6 left-2 px-2 py-1 rounded-md text-xs font-medium text-white shadow-lg whitespace-nowrap backdrop-blur-sm border border-white/10"
               style={{ backgroundColor: cursor.color }}
             >
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 bg-white rounded-full opacity-80"></div>
-                <span>{cursor.username}</span>
-              </div>
-              {cursor.selection && (
-                <div className="text-xs opacity-90 mt-0.5">
-                  editing table
-                </div>
-              )}
+              {cursor.username}
             </div>
 
-            {/* Pulse Animation */}
+            {/* Subtle pulse animation */}
             <div 
-              className="absolute w-4 h-4 rounded-full animate-ping opacity-30"
+              className="absolute w-3 h-3 rounded-full animate-ping opacity-20"
               style={{ 
                 backgroundColor: cursor.color,
                 top: '50%',
@@ -111,18 +115,6 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
               }}
             />
           </div>
-
-          {/* Selection Highlight */}
-          {cursor.selection && (
-            <div 
-              className="absolute w-2 h-2 rounded-full animate-pulse"
-              style={{ 
-                backgroundColor: cursor.color,
-                top: -4,
-                left: -4
-              }}
-            />
-          )}
         </div>
       ))}
     </div>

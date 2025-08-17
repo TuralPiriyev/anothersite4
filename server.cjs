@@ -875,7 +875,8 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
                 username: message.cursor.username || 'Unknown User',
                 position: message.cursor.position || { x: 0, y: 0 },
                 color: message.cursor.color || '#3B82F6',
-                lastSeen: message.cursor.lastSeen || new Date().toISOString()
+                lastSeen: message.cursor.lastSeen || new Date().toISOString(),
+                selection: message.cursor.selection
               },
               timestamp: new Date().toISOString(),
               schemaId,
@@ -885,13 +886,14 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
             console.warn(`👥 [${clientId}] Invalid cursor_update message structure:`, message);
           }
           break;
-            // Reduced logging for cursor updates to prevent spam
+        case 'user_join':
           if (message.userId && message.username) {
             broadcastMessage = {
               type: 'user_joined',
               user: {
                 id: message.userId,
                 username: message.username,
+                role: message.role || 'editor',
                 color: message.color || '#3B82F6'
               },
               timestamp: new Date().toISOString(),

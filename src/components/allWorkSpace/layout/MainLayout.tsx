@@ -15,7 +15,7 @@ const MainLayout: React.FC = () => {
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [collaborativeCursors, setCollaborativeCursors] = useState<CursorData[]>([]);
   const [isCollaborationConnected, setIsCollaborationConnected] = useState(false);
-  const [lastCursorUpdate, setLastCursorUpdate] = useState<number>(0);
+  const [cursorUpdateThrottle, setCursorUpdateThrottle] = useState<number>(0);
 
   const { currentSchema } = useDatabase();
 
@@ -25,46 +25,53 @@ const MainLayout: React.FC = () => {
       
       switch (type) {
         case 'cursor_update':
+          // Enhanced cursor validation and deduplication
           if (data && 
               typeof data === 'object' && 
               data.userId && 
               typeof data.userId === 'string' &&
               data.userId.trim().length > 0 &&
-              data.userId !== 'current_user') { // Don't show own cursor
+              data.username &&
+              typeof data.username === 'string' &&
+              data.userId !== 'current_user') { // Never show own cursor
             
             const now = Date.now();
-            // Throttle cursor updates to prevent spam
-            if (now - lastCursorUpdate < 50) return; // Max 20 updates per second
-            setLastCursorUpdate(now);
+            // More aggressive throttling to prevent duplicate cursors
+            if (now - cursorUpdateThrottle < 150) return; // Max ~7 updates per second
+            setCursorUpdateThrottle(now);
             
             setCollaborativeCursors(prev => {
-              // Remove old cursor for this user and add new one
-              const otherCursors = prev.filter(c => c.userId !== data.userId);
+              // Advanced deduplication: remove ALL cursors for this user first
+              const filteredCursors = prev.filter(c => 
+                c.userId !== data.userId && 
+                c.username !== data.username
+              );
+              
               const newCursor = {
                 userId: data.userId,
-                username: data.username || 'Unknown User',
+                username: data.username,
                 position: data.position || { x: 0, y: 0 },
                 color: data.color || '#3B82F6',
                 lastSeen: data.lastSeen || new Date().toISOString(),
                 selection: data.selection
               };
               
-              return [...otherCursors, newCursor];
+              return [...filteredCursors, newCursor];
             });
-          } else {
-            // Don't log warnings for own cursor or invalid data to reduce noise
           }
           break;
           
         case 'user_left':
           if (data && data.userId) {
-            setCollaborativeCursors(prev => prev.filter(c => c.userId !== data.userId));
+            setCollaborativeCursors(prev => prev.filter(c => 
+              c.userId !== data.userId && c.username !== data.username
+            ));
           }
           break;
           
         case 'connection_status':
           setIsCollaborationConnected(data.connected);
-          // Clear cursors when disconnected
+          // Clear all cursors when disconnected
           if (!data.connected) {
             setCollaborativeCursors([]);
           }
@@ -80,7 +87,7 @@ const MainLayout: React.FC = () => {
     return () => {
       window.removeEventListener('collaboration-event', handleCollaborationUpdate as EventListener);
     };
-  }, [currentSchema?.id, lastCursorUpdate]);
+  }, [currentSchema?.id, cursorUpdateThrottle]);
 
   // Panel toggles
   const toggleLeftPanel = () => setLeftPanelOpen(p => !p);
@@ -88,15 +95,20 @@ const MainLayout: React.FC = () => {
   const toggleLeftCollapse = () => setLeftPanelCollapsed(p => !p);
   const toggleRightCollapse = () => setRightPanelCollapsed(p => !p);
 
-  // Cursor move broadcast - now handled via collaboration events
+  // Enhanced cursor move handling with better throttling
   const handleCursorMove = (pos: { x: number; y: number; tableId?: string; columnId?: string }) => {
-    // Only broadcast if collaboration is connected and we have a valid position
+    // Strict validation and throttling
     if (isCollaborationConnected && 
         pos && 
         typeof pos.x === 'number' && 
-        typeof pos.y === 'number') {
+        typeof pos.y === 'number' &&
+        pos.x >= 0 && pos.y >= 0) {
       
-      // Dispatch cursor move event to RealTimeCollaboration component
+      // Throttle cursor broadcasts
+      const now = Date.now();
+      if (now - cursorUpdateThrottle < 100) return;
+      setCursorUpdateThrottle(now);
+      
       window.dispatchEvent(new CustomEvent('cursor-move', {
         detail: { position: pos }
       }));

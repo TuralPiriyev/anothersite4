@@ -201,7 +201,6 @@ export default class CollaborationService {
     }
 
     if (!this.isConnected || !this.connectionId || !simpleWebSocketService.isConnected(this.connectionId)) {
-      // Reduced logging to prevent spam
       return;
     }
 
@@ -217,7 +216,6 @@ export default class CollaborationService {
       }
     };
 
-    // Reduced logging for cursor updates to prevent spam
     this.sendMessage(cursorMessage);
   }
 
