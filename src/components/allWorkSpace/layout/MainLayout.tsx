@@ -15,37 +15,44 @@ const MainLayout: React.FC = () => {
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [collaborativeCursors, setCollaborativeCursors] = useState<CursorData[]>([]);
   const [isCollaborationConnected, setIsCollaborationConnected] = useState(false);
+  const [lastCursorUpdate, setLastCursorUpdate] = useState<number>(0);
 
   const { currentSchema } = useDatabase();
 
   useEffect(() => {
-    // Listen for collaboration events from RealTimeCollaboration component
-    // This prevents duplicate connections and event handler conflicts
-    
     const handleCollaborationUpdate = (event: CustomEvent) => {
       const { type, data } = event.detail;
       
       switch (type) {
         case 'cursor_update':
-          // Enhanced validation for cursor data
           if (data && 
               typeof data === 'object' && 
               data.userId && 
               typeof data.userId === 'string' &&
-              data.userId.trim().length > 0) {
+              data.userId.trim().length > 0 &&
+              data.userId !== 'current_user') { // Don't show own cursor
+            
+            const now = Date.now();
+            // Throttle cursor updates to prevent spam
+            if (now - lastCursorUpdate < 50) return; // Max 20 updates per second
+            setLastCursorUpdate(now);
             
             setCollaborativeCursors(prev => {
-              const filtered = prev.filter(c => c.userId !== data.userId);
-              return [...filtered, {
+              // Remove old cursor for this user and add new one
+              const otherCursors = prev.filter(c => c.userId !== data.userId);
+              const newCursor = {
                 userId: data.userId,
                 username: data.username || 'Unknown User',
                 position: data.position || { x: 0, y: 0 },
                 color: data.color || '#3B82F6',
-                lastSeen: data.lastSeen || new Date().toISOString()
-              }];
+                lastSeen: data.lastSeen || new Date().toISOString(),
+                selection: data.selection
+              };
+              
+              return [...otherCursors, newCursor];
             });
           } else {
-            console.warn('⚠️ Invalid cursor data received in MainLayout:', data);
+            // Don't log warnings for own cursor or invalid data to reduce noise
           }
           break;
           
@@ -57,21 +64,23 @@ const MainLayout: React.FC = () => {
           
         case 'connection_status':
           setIsCollaborationConnected(data.connected);
+          // Clear cursors when disconnected
+          if (!data.connected) {
+            setCollaborativeCursors([]);
+          }
           break;
           
         default:
-          // Handle other collaboration events if needed
           break;
       }
     };
 
-    // Listen for collaboration events from RealTimeCollaboration component
     window.addEventListener('collaboration-event', handleCollaborationUpdate as EventListener);
 
     return () => {
       window.removeEventListener('collaboration-event', handleCollaborationUpdate as EventListener);
     };
-  }, [currentSchema?.id]);
+  }, [currentSchema?.id, lastCursorUpdate]);
 
   // Panel toggles
   const toggleLeftPanel = () => setLeftPanelOpen(p => !p);

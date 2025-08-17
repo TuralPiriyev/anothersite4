@@ -201,7 +201,7 @@ export default class CollaborationService {
     }
 
     if (!this.isConnected || !this.connectionId || !simpleWebSocketService.isConnected(this.connectionId)) {
-      console.warn('⚠️ Cannot send cursor update: not connected');
+      // Reduced logging to prevent spam
       return;
     }
 
@@ -217,7 +217,7 @@ export default class CollaborationService {
       }
     };
 
-    console.log('📍 Sending cursor update:', cursorMessage);
+    // Reduced logging for cursor updates to prevent spam
     this.sendMessage(cursorMessage);
   }
 

@@ -187,7 +187,8 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
           if (cursor && 
               typeof cursor === 'object' && 
               cursor.userId && 
-              typeof cursor.userId === 'string') {
+              typeof cursor.userId === 'string' &&
+              cursor.userId !== demoUser.id) { // Don't process own cursor updates
             setCursors(prev => {
               const existing = prev.findIndex(c => c.userId === cursor.userId);
               const cursorData = {
@@ -196,7 +197,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                 position: cursor.position || { x: 0, y: 0 },
                 selection: cursor.selection,
                 color: cursor.color || '#3B82F6',
-                lastSeen: new Date(cursor.lastSeen || Date.now())
+                lastSeen: cursor.lastSeen || new Date().toISOString()
               };
 
               if (existing >= 0) {
@@ -212,7 +213,7 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
               detail: { type: 'cursor_update', data: cursor }
             }));
           } else {
-            console.warn('⚠️ Invalid cursor data in RealTimeCollaboration:', cursor);
+            // Reduced logging to prevent spam
           }
         };
 
@@ -275,10 +276,115 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
   useEffect(() => {
     const handleCursorMove = (event: CustomEvent) => {
       const { position } = event.detail;
+      // Throttle cursor updates and don't send if position hasn't changed significantly
       if (position && isConnected && collaborationService.isConnectedState()) {
-        collaborationService.sendCursorUpdate(position);
+        const now = Date.now();
+        const timeSinceLastUpdate = now - (handleCursorMove.lastUpdate || 0);
+        
+        // Only send cursor updates every 100ms to prevent spam
+        if (timeSinceLastUpdate > 100) {
+          handleCursorMove.lastUpdate = now;
+          collaborationService.sendCursorUpdate(position);
+        }
       }
     };
+
+
+  // Enhanced member management with real-time updates
+  useEffect(() => {
+    const updateTeamMembers = async () => {
+      if (currentPlan === 'ultimate' && currentSchema.isShared) {
+        try {
+          // Fetch latest members from MongoDB
+          const members = await mongoService.getWorkspaceMembers(currentSchema.id);
+          const invitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
+          
+          // Update collaborators state with real members
+          setCollaborators(members.map(member => ({
+            userId: member.id,
+            username: member.username,
+            role: member.role as 'admin' | 'editor' | 'viewer',
+            status: 'online' as const,
+            currentAction: 'Working on schema',
+            joinedAt: member.joinedAt
+          })));
+          
+          // Update schema with fresh data
+          setCurrentSchema(prev => ({
+            ...prev,
+            members: members,
+            invitations: invitations
+          }));
+          
+        } catch (error) {
+          console.error('Failed to update team members:', error);
+        }
+      }
+    };
+
+    // Update team members when component mounts and periodically
+    updateTeamMembers();
+    const interval = setInterval(updateTeamMembers, 15000); // Every 15 seconds
+
+    return () => clearInterval(interval);
+  }, [currentPlan, currentSchema.isShared, currentSchema.id]);
+
+  // Handle successful invitation acceptance
+  useEffect(() => {
+    const handleInvitationAccepted = async () => {
+      if (joinSuccess) {
+        // Refresh team members after successful join
+        try {
+          const members = await mongoService.getWorkspaceMembers(currentSchema.id);
+          setCollaborators(members.map(member => ({
+            userId: member.id,
+            username: member.username,
+            role: member.role as 'admin' | 'editor' | 'viewer',
+            status: 'online' as const,
+            currentAction: 'Just joined',
+            joinedAt: member.joinedAt
+          })));
+        } catch (error) {
+          console.error('Failed to refresh members after join:', error);
+        }
+      }
+    };
+
+    if (joinSuccess) {
+      handleInvitationAccepted();
+    }
+  }, [joinSuccess, currentSchema.id]);
+
+  // Handle successful invitation sending
+  useEffect(() => {
+    const handleInvitationSent = async () => {
+      if (inviteSuccess && generatedCode) {
+        // Refresh invitations list
+        try {
+          const invitations = await mongoService.getWorkspaceInvitations(currentSchema.id);
+          setCurrentSchema(prev => ({
+            ...prev,
+            invitations: invitations,
+            isShared: true
+          }));
+        } catch (error) {
+          console.error('Failed to refresh invitations:', error);
+        }
+      }
+    };
+
+    if (inviteSuccess && generatedCode) {
+      handleInvitationSent();
+    }
+      const fiveSecondsAgo = now - 5000;
+
+      setCollaborativeCursors(prev => 
+        prev.filter(cursor => {
+          const lastSeenTime = new Date(cursor.lastSeen).getTime();
+          return lastSeenTime > fiveSecondsAgo;
+        })
+      );
+    }, 2000); // Clean up every 2 seconds
 
     window.addEventListener('cursor-move', handleCursorMove as EventListener);
 
@@ -702,6 +808,23 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
         {/* Send Invitation Tab */}
         {activeTab === 'invite' && (
           <div className="space-y-6">
+            {/* Team Creation Header */}
+            <div className="bg-gradient-to-r from-purple-100 to-blue-100 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl flex items-center justify-center">
+                  <Users className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    Team Collaboration Workspace
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Create and manage your collaborative database design team
+                  </p>
+                </div>
+              </div>
+            </div>
+            
             <div className="bg-gradient-to-br from-white to-blue-50 dark:from-gray-800 dark:to-blue-900/10 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
@@ -837,6 +960,11 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                         <p className="text-xs text-green-600 dark:text-green-400 mt-1">
                           Code expires in 24 hours
                         </p>
+                        <div className="mt-3 p-2 bg-green-200 dark:bg-green-700/20 rounded-md">
+                          <p className="text-xs text-green-800 dark:text-green-200 font-medium">
+                            📋 Share this code with {inviteUsername} to add them to your team
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -920,6 +1048,11 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                       <p className="text-green-800 dark:text-green-200 text-sm font-medium">Welcome!</p>
                     </div>
                     <p className="text-green-700 dark:text-green-300 text-sm mt-1">{joinSuccess}</p>
+                    <div className="mt-3 p-2 bg-green-200 dark:bg-green-700/20 rounded-md">
+                      <p className="text-xs text-green-800 dark:text-green-200 font-medium">
+                        🎉 You are now part of the team! Check the Team Members tab to see all members.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -937,17 +1070,29 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                     <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                   </div>
                   <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    Team Members ({currentSchema.members.length})
+                    Team Members ({collaborators.length + currentSchema.members.length})
                   </h4>
                 </div>
+                <button
+                  onClick={() => setActiveTab('invite')}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl transition-all duration-200 font-medium shadow-lg hover:shadow-xl"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Create Team
+                </button>
               </div>
               
               <div className="space-y-3">
+                {/* Current Schema Members */}
                 {currentSchema.members.map(member => (
                   <div key={member.id} className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all duration-200">
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/20 dark:to-pink-900/20 rounded-full flex items-center justify-center">
-                        <Users className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                        {member.role === 'owner' ? (
+                          <Crown className="w-6 h-6 text-yellow-600 dark:text-yellow-400" />
+                        ) : (
+                          <Users className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                        )}
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
@@ -959,6 +1104,17 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                               You
                             </span>
                           )}
+                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                            member.role === 'owner' 
+                              ? 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200'
+                              : member.role === 'admin'
+                              ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-800 dark:text-purple-200'
+                              : member.role === 'editor'
+                              ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200'
+                              : 'bg-gray-100 dark:bg-gray-900/20 text-gray-800 dark:text-gray-200'
+                          }`}>
+                            {member.role}
+                          </span>
                         </div>
                         <p className="text-sm text-gray-500 dark:text-gray-400">
                           Joined {member.joinedAt.toLocaleDateString()}
@@ -966,10 +1122,6 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className={`px-3 py-1 text-xs font-medium rounded-full ${getRoleBadgeColor(member.role)}`}>
-                        {member.role}
-                        {member.role === 'owner' && <Crown className="w-3 h-3 inline ml-1" />}
-                      </span>
                       {member.role !== 'owner' && member.username !== 'current_user' && (
                         <button
                           onClick={() => removeMember(member.id)}
@@ -982,6 +1134,61 @@ const [collaborationStatus, setCollaborationStatus] = useState<CollaborationStat
                     </div>
                   </div>
                 ))}
+                
+                {/* Active Collaborators */}
+                {collaborators.map(collaborator => (
+                  <div key={collaborator.userId} className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/10 dark:to-emerald-900/10 border border-green-200 dark:border-green-800 rounded-xl hover:shadow-md transition-all duration-200">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/20 rounded-full flex items-center justify-center relative">
+                        <Users className="w-6 h-6 text-green-600 dark:text-green-400" />
+                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full"></div>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-gray-900 dark:text-white">
+                            {collaborator.username}
+                          </p>
+                          <span className="text-xs bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-200 px-2 py-1 rounded-full">
+                            Online
+                          </span>
+                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                            collaborator.role === 'admin'
+                              ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-800 dark:text-purple-200'
+                              : collaborator.role === 'editor'
+                              ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200'
+                              : 'bg-gray-100 dark:bg-gray-900/20 text-gray-800 dark:text-gray-200'
+                          }`}>
+                            {collaborator.role}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          {collaborator.currentAction || 'Working on schema'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div 
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: collaborators.find(c => c.userId === collaborator.userId)?.status === 'online' ? '#10B981' : '#6B7280' }}
+                      ></div>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        Active now
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                
+                {currentSchema.members.length === 0 && collaborators.length === 0 && (
+                  <div className="text-center py-8">
+                    <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-500 dark:text-gray-400 mb-2">
+                      No team members yet
+                    </p>
+                    <p className="text-sm text-gray-400">
+                      Invite team members to start collaborating
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

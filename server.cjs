@@ -885,7 +885,7 @@ app.ws('/ws/collaboration/:schemaId', (ws, req) => {
             console.warn(`👥 [${clientId}] Invalid cursor_update message structure:`, message);
           }
           break;
-        case 'user_join':
+            // Reduced logging for cursor updates to prevent spam
           if (message.userId && message.username) {
             broadcastMessage = {
               type: 'user_joined',

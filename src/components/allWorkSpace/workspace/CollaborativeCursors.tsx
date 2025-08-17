@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { MousePointer } from 'lucide-react';
 
-interface CursorData {
+export interface CursorData {
   userId: string;
   username: string;
   position: { x: number; y: number };
@@ -10,7 +10,7 @@ interface CursorData {
     tableId: string;
     columnId?: string;
   };
-  lastSeen: Date;
+  lastSeen: string;
 }
 
 interface CollaborativeCursorsProps {
@@ -23,6 +23,7 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
   onCursorMove 
 }) => {
   const [localCursor, setLocalCursor] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [visibleCursors, setVisibleCursors] = useState<CursorData[]>([]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -35,12 +36,40 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
     return () => document.removeEventListener('mousemove', handleMouseMove);
   }, [onCursorMove]);
 
+  // Filter and deduplicate cursors
+  useEffect(() => {
+    const now = Date.now();
+    const fiveSecondsAgo = now - 5000;
+    
+    // Remove old cursors and deduplicate by userId
+    const uniqueCursors = cursors.reduce((acc, cursor) => {
+      const lastSeenTime = new Date(cursor.lastSeen).getTime();
+      
+      // Only show cursors from last 5 seconds
+      if (lastSeenTime > fiveSecondsAgo) {
+        // Check if we already have a cursor for this user
+        const existingIndex = acc.findIndex(c => c.userId === cursor.userId);
+        if (existingIndex >= 0) {
+          // Keep the most recent one
+          if (lastSeenTime > new Date(acc[existingIndex].lastSeen).getTime()) {
+            acc[existingIndex] = cursor;
+          }
+        } else {
+          acc.push(cursor);
+        }
+      }
+      
+      return acc;
+    }, [] as CursorData[]);
+    
+    setVisibleCursors(uniqueCursors);
+  }, [cursors]);
   return (
     <div className="fixed inset-0 pointer-events-none z-50">
-      {cursors.map(cursor => (
+      {visibleCursors.map(cursor => (
         <div
           key={cursor.userId}
-          className="absolute transition-all duration-100 ease-out pointer-events-none"
+          className="absolute transition-all duration-200 ease-out pointer-events-none"
           style={{
             left: cursor.position.x,
             top: cursor.position.y,
@@ -50,19 +79,44 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
           {/* Cursor Icon */}
           <div className="relative">
             <MousePointer 
-              className="w-5 h-5 drop-shadow-lg"
+              className="w-6 h-6 drop-shadow-lg filter drop-shadow-md"
               style={{ color: cursor.color }}
             />
             
-            {/* Username Label */}
+            {/* Enhanced Username Label */}
             <div 
-              className="absolute top-6 left-2 px-2 py-1 rounded text-xs font-medium text-white shadow-lg whitespace-nowrap"
+              className="absolute top-7 left-3 px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow-xl whitespace-nowrap border border-white/20 backdrop-blur-sm"
               style={{ backgroundColor: cursor.color }}
             >
-              {cursor.username}
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 bg-white rounded-full opacity-80"></div>
+                <span>{cursor.username}</span>
+              </div>
               {cursor.selection && (
-                <span className="ml-1 opacity-75">
-                  editing {cursor.selection.tableId}
+                <div className="text-xs opacity-90 mt-0.5">
+                  editing table
+                </div>
+              )}
+            </div>
+
+            {/* Pulse Animation */}
+            <div 
+              className="absolute w-4 h-4 rounded-full animate-ping opacity-30"
+              style={{ 
+                backgroundColor: cursor.color,
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)'
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export default CollaborativeCursors;
                 </span>
               )}
             </div>
