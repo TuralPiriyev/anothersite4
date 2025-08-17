@@ -64,6 +64,7 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
     
     setVisibleCursors(uniqueCursors);
   }, [cursors]);
+
   return (
     <div className="fixed inset-0 pointer-events-none z-50">
       {visibleCursors.map(cursor => (
@@ -109,17 +110,6 @@ const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({
                 transform: 'translate(-50%, -50%)'
               }}
             />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-export default CollaborativeCursors;
-                </span>
-              )}
-            </div>
           </div>
 
           {/* Selection Highlight */}
