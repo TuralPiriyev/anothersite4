@@ -375,7 +375,7 @@ const RealTimeCollaboration: React.FC = () => {
       // Portfolio loading is handled by PortfolioProvider
       setTimeout(() => setIsLoadingPortfolios(false), 1000);
     }
-  }, [canUseCollaboration, loadTeamMembers]);
+  }, [canUseCollaboration, loadTeamMembers, currentSchema.members]);
 
   // Show upgrade prompt for non-Ultimate users
   if (!canUseCollaboration) {
