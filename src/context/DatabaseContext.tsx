@@ -337,12 +337,32 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
 
     console.log('Updated local schema with invitation');
     
-    // Save to MongoDB (optional - can be done later)
+    // Save to MongoDB via API
     try {
-      // await mongoService.saveInvitation(newInvitation);
-      console.log('Skipping MongoDB save for now');
+      const response = await fetch('/api/invitations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          workspaceId: newInvitation.workspaceId,
+          inviterUsername: newInvitation.inviterUsername,
+          inviteeUsername: newInvitation.inviteeUsername,
+          role: newInvitation.role,
+          joinCode: newInvitation.joinCode,
+          createdAt: newInvitation.createdAt.toISOString(),
+          expiresAt: newInvitation.expiresAt.toISOString()
+        })
+      });
+      
+      if (response.ok) {
+        console.log('✅ Invitation saved to server successfully');
+      } else {
+        console.warn('⚠️ Failed to save invitation to server, but continuing with local state');
+      }
     } catch (error) {
-      console.error('Failed to save invitation to MongoDB:', error);
+      console.warn('⚠️ Network error saving invitation, but continuing with local state:', error);
     }
     
     console.log('Returning join code:', joinCode);
