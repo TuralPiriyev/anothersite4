@@ -302,9 +302,11 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     return await mongoService.validateUsername(username);
   }, []);
 
-  const inviteToWorkspace = useCallback(async (
-    invitation: Omit<WorkspaceInvitation, 'id' | 'workspaceId' | 'createdAt' | 'expiresAt' | 'status'| 'joinCode'>
-  ): Promise<string> => {
+  const inviteToWorkspace = useCallback(async (invitation: {
+    inviterUsername: string;
+    inviteeUsername: string;
+    role: 'editor' | 'viewer';
+  }): Promise<string> => {
     console.log('inviteToWorkspace called with:', invitation);
     
     // Generate secure join code
@@ -317,8 +319,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     console.log('Generated join code:', joinCode);
 
     const newInvitation: WorkspaceInvitation = {
-      ...invitation,
       id: uuidv4(),
+      inviterUsername: invitation.inviterUsername,
+      inviteeUsername: invitation.inviteeUsername,
+      role: invitation.role,
       workspaceId: currentSchema.id,
       joinCode,
       createdAt: new Date(),
@@ -368,7 +372,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     console.log('Returning join code:', joinCode);
 
     return joinCode;
-  }, [currentSchema.id]);
+  }, [currentSchema.id, currentSchema.invitations]);
 
   const acceptWorkspaceInvitation = useCallback(async (joinCode: string): Promise<boolean> => {
     console.log('Attempting to accept invitation with code:', joinCode);

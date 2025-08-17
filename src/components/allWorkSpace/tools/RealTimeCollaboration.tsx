@@ -253,7 +253,7 @@ const RealTimeCollaboration: React.FC = () => {
       let joinCode = '';
       try {
         console.log('🔄 Creating workspace invitation...');
-        joinCode = await currentSchema.inviteToWorkspace({
+        joinCode = await inviteToWorkspace({
           inviterUsername: 'current_user',
           inviteeUsername: inviteUsername.trim(),
           role: inviteRole
@@ -269,6 +269,7 @@ const RealTimeCollaboration: React.FC = () => {
       setGeneratedCode(joinCode);
       setInviteSuccess(true);
       setInviteUsername('');
+      setSelectedDatabase('');
       
       // Refresh team members
       loadTeamMembers();
